@@ -1,0 +1,557 @@
+==============================================================================
+PHASE A CROSS-VERIFICATION REPORT (build directory)
+==============================================================================
+
+HIGH-LEVEL COUNTS
+------------------------------------------------------------------------------
+  BRs in workbook:              248
+  SR references in workbook:    666
+  Unique SR IDs referenced:     484
+  SRs defined in specs:         484
+  Covered (ref + def):          484
+  Broken refs (ref not def):    0
+  Unreferenced SRs (def not ref): 0
+
+
+==============================================================================
+SECTION 1: BROKEN REFERENCES (workbook references that do not resolve)
+==============================================================================
+
+  NONE — all SR references resolve cleanly.
+
+
+==============================================================================
+SECTION 2: UNREFERENCED SRs (spec SRs with no BR coverage)
+==============================================================================
+NOTE: In steady state this must be zero. Any entry indicates drift
+      between the spec contract and the validation workbook.
+
+  NONE — all defined SRs are referenced by at least one BR.
+
+
+==============================================================================
+SECTION 3: BR -> SR MAPPING (for semantic review)
+==============================================================================
+
+
+[1. Governance]
+  BR_GOV_01
+    -> SR_GOV_70, SR_GOV_41, SR_GOV_42, SR_GOV_43
+  BR_GOV_01_ApprovalRouter
+    -> SR_GOV_42, SR_GOV_41
+  BR_GOV_01_ApprovalRouter_SE-01
+    -> SR_GOV_04, SR_GOV_41
+  BR_GOV_01_RequestValidation
+    -> SR_GOV_70
+  BR_GOV_01_RequestValidation_BE-01
+    -> SR_GOV_70
+  BR_GOV_01_RequestValidation_BE-02
+    -> SR_GOV_70
+  BR_GOV_02
+    -> SR_GOV_02, SR_GOV_02_SE-01, SR_GOV_02_SE-02, SR_GOV_02_BE-01, SR_GOV_02_BE-02, SR_GOV_03, SR_GOV_03_SE-01, SR_GOV_03_SE-02, SR_GOV_03_BE-01, SR_GOV_03_BE-02, SR_GOV_04, SR_GOV_04_SE-01, SR_GOV_04_SE-02, SR_GOV_05, SR_GOV_05_BE-01, SR_GOV_05_BE-02, SR_GOV_06, SR_GOV_06_BE-01
+  BR_GOV_02_EvaluateImpact
+    -> SR_GOV_03, SR_GOV_06
+  BR_GOV_02_WebhookReceive
+    -> SR_GOV_03
+  BR_GOV_02_WebhookReceive_BE-01
+    -> SR_GOV_05, SR_GOV_06
+  BR_GOV_02_WebhookReceive_SE-01
+    -> SR_GOV_03
+  BR_GOV_03
+    -> SR_GOV_23, SR_GOV_23_BE-01, SR_GOV_24, SR_GOV_25, SR_GOV_26, SR_GOV_27, SR_GOV_28, SR_GOV_29, SR_GOV_29_REVIEW, SR_GOV_30
+  BR_GOV_03_EnumerateFields
+    -> SR_GOV_24
+  BR_GOV_03_MatchRules_BE-01
+    -> SR_GOV_25, SR_GOV_26
+  BR_GOV_03_MatchRules_BE-02
+    -> SR_GOV_25, SR_GOV_28
+  BR_GOV_04
+    -> SR_GOV_31, SR_GOV_31_BE-01, SR_GOV_32, SR_GOV_33, SR_GOV_34, SR_GOV_35, SR_GOV_36
+  BR_GOV_04_CompartmentCheck_BE-01
+    -> SR_GOV_33
+  BR_GOV_05
+    -> SR_GOV_18, SR_GOV_18_BE-01, SR_GOV_72
+  BR_GOV_05_ValidateJustification_BE-01
+    -> SR_GOV_18, SR_GOV_72
+  BR_GOV_05_ValidateJustification_BE-02
+    -> SR_GOV_18, SR_GOV_72
+  BR_GOV_06
+    -> SR_GOV_10, SR_GOV_10_BE-01, SR_GOV_10_BE-02, SR_GOV_11, SR_GOV_11_BE-01, SR_GOV_11_REVOKE, SR_GOV_12, SR_GOV_13, SR_GOV_13_SE-01, SR_GOV_13_BE-01, SR_GOV_14, SR_GOV_14_BE-01, SR_GOV_14_BE-02, SR_GOV_14_REVOKE, SR_GOV_15, SR_GOV_15_BE-01
+  BR_GOV_06_ApplyTransition_BE-01
+    -> SR_GOV_13
+  BR_GOV_06_ApplyTransition_BE-02
+    -> SR_GOV_11, SR_GOV_13, SR_GOV_15
+  BR_GOV_07
+    -> SR_GOV_47, SR_GOV_47_SE-01, SR_GOV_48, SR_GOV_49, SR_GOV_50, SR_GOV_51, SR_DM_05, SR_DM_06
+  BR_GOV_07_ComputeHash
+    -> SR_GOV_47
+  BR_GOV_07_InsertRow_SE-01
+    -> SR_GOV_47
+  BR_GOV_08
+    -> SR_GOV_46, SR_GOV_46_REVIEW
+  BR_GOV_08_DualApproval_BE-01
+    -> SR_GOV_46
+  BR_GOV_08_TokenIssuance_SE-01
+    -> SR_GOV_46
+  BR_GOV_09
+    -> SR_GOV_19, SR_GOV_19_BE-01, SR_GOV_20, SR_GOV_21, SR_GOV_22
+  BR_GOV_09_Publish_BE-01
+    -> SR_GOV_19
+  BR_GOV_10
+    -> SR_GOV_63, SR_SA_30
+  BR_GOV_11
+    -> SR_GOV_53, SR_GOV_54, SR_GOV_55, SR_GOV_56, SR_CONN_38, SR_CONN_39
+  BR_GOV_12
+    -> SR_GOV_59, SR_INT_22
+  BR_GOV_13
+    -> SR_GOV_60, SR_LLM_50, SR_LLM_51
+  BR_GOV_14
+    -> SR_GOV_68, SR_DM_29
+  BR_GOV_15
+    -> SR_GOV_69, SR_UI_35
+  BR_GOV_16
+    -> SR_GOV_07, SR_GOV_07_SE-01, SR_GOV_07_BE-01, SR_GOV_07_BE-02, SR_GOV_08, SR_GOV_08_SE-01, SR_GOV_08_BE-01, SR_GOV_08_BE-02, SR_GOV_08_BE-03, SR_GOV_09, SR_GOV_09_BE-01
+  BR_GOV_16_Migration_BE-01
+    -> SR_GOV_09_BE-01
+  BR_GOV_17
+    -> SR_GOV_16, SR_GOV_16_SE-01, SR_GOV_16_SE-02, SR_GOV_17
+  BR_GOV_17_Evaluate_SE-01
+    -> SR_GOV_16_SE-01, SR_GOV_16_SE-02
+  BR_GOV_18
+    -> SR_GOV_37, SR_GOV_38, SR_GOV_39, SR_GOV_40
+  BR_GOV_19
+    -> SR_GOV_44, SR_GOV_45
+
+[10. Value Flywheel]
+  BR_FW_01
+    -> SR_FW_01, SR_FW_02, SR_FW_03
+  BR_FW_02
+    -> SR_FW_05
+  BR_FW_03
+    -> SR_FW_06
+  BR_FW_04
+    -> SR_FW_10
+  BR_FW_05
+    -> SR_FW_15
+  BR_FW_06
+    -> SR_FW_20
+
+[11. Unknown Unknowns]
+  BR_UU_01
+    -> SR_UU_01
+  BR_UU_02
+    -> SR_UU_02
+  BR_UU_03
+    -> SR_UU_03
+
+[12. V2 Handoff Contract]
+  BR_V2_01
+    -> SR_V2_01, SR_V2_05
+  BR_V2_02
+    -> SR_V2_10
+  BR_V2_03
+    -> SR_V2_15
+  BR_V2_04
+    -> SR_V2_18, SR_V2_20
+  BR_V2_05
+    -> SR_V2_25
+  BR_V2_06
+    -> SR_V2_30
+  BR_V2_07
+    -> SR_V2_35
+
+[13. Scalability Infrastructure]
+  BR_SCALE_01
+    -> SR_SCALE_01, SR_SCALE_05, SR_SCALE_05_SE-01
+  BR_SCALE_01_AutoScale_SE-01
+    -> SR_SCALE_05
+  BR_SCALE_02
+    -> SR_SCALE_08, SR_SCALE_09
+  BR_SCALE_03
+    -> SR_SCALE_10, SR_SCALE_11, SR_SCALE_12, SR_SCALE_13, SR_SCALE_14
+  BR_SCALE_04
+    -> SR_SCALE_12
+  BR_SCALE_05
+    -> SR_SCALE_15, SR_SCALE_15_SE-01
+  BR_SCALE_06
+    -> SR_SCALE_18
+  BR_SCALE_07
+    -> SR_SCALE_20
+  BR_SCALE_08
+    -> SR_SCALE_22, SR_SCALE_24
+  BR_SCALE_09
+    -> SR_SCALE_25, SR_SCALE_25_BE-01, SR_SCALE_50
+  BR_SCALE_09_Quota_BE-01
+    -> SR_SCALE_25
+  BR_SCALE_10
+    -> SR_SCALE_30
+  BR_SCALE_11
+    -> SR_SCALE_35
+  BR_SCALE_12
+    -> SR_SCALE_40
+  BR_SCALE_13
+    -> SR_SCALE_45, SR_SCALE_46, SR_SCALE_47
+
+[2. Forecasting]
+  BR_DS_01
+    -> SR_DS_01, SR_DS_02, SR_DS_03, SR_DS_04, SR_DS_05, SR_DS_06, SR_DS_07, SR_DS_08, SR_DS_09, SR_DS_10, SR_DS_11, SR_DS_12, SR_DS_20, SR_GOV_74
+  BR_DS_01_ClassifyRequest
+    -> SR_DS_01
+  BR_DS_02
+    -> SR_DS_02, SR_DS_22, SR_DS_23
+  BR_DS_02_PermissionFilter_BE-01
+    -> SR_DS_02, SR_GOV_33
+  BR_DS_03
+    -> SR_DS_03, SR_INT_18, SR_INT_19, SR_DS_35, SR_GOV_24
+  BR_DS_03_CheckFreshness_BE-01
+    -> SR_DS_03, SR_INT_18
+  BR_DS_03_RunCSA
+    -> SR_DS_05, SR_GOV_24
+  BR_DS_04
+    -> SR_DS_04
+  BR_DS_04_RelevanceGate_BE-01
+    -> SR_DS_04, SR_DS_08, SR_DS_09
+  BR_DS_05
+    -> SR_DS_06, SR_DS_25, SR_LLM_01, SR_LLM_18
+  BR_DS_05_DBEv2_BE-01
+    -> SR_LLM_30, SR_LLM_33
+  BR_DS_05_DBEv2_BE-02
+    -> SR_LLM_30, SR_LLM_32
+  BR_DS_05_MultiModelDecomposition
+    -> SR_LLM_18
+  BR_DS_06
+    -> SR_DS_07, SR_DS_38, SR_INT_09
+  BR_DS_06_CompareSourcePrediction
+    -> SR_DS_31
+  BR_DS_06_CompareSourcePrediction_BE-01
+    -> SR_DS_31, SR_GOV_67
+  BR_DS_07
+    -> SR_DS_10, SR_DS_14, SR_DS_24
+  BR_DS_07_DetectConflict_BE-01
+    -> SR_DS_10
+  BR_DS_08
+    -> SR_DS_11, SR_DS_22, SR_DS_29
+  BR_DS_08_Deliver_SE-01
+    -> SR_DS_22, SR_SCALE_30
+  BR_DS_09
+    -> SR_DS_12, SR_DS_13, SR_DS_15, SR_DS_27, SR_DS_36, SR_DM_11, SR_DM_16, SR_INT_14
+  BR_DS_09_HandleExpiration
+    -> SR_DS_13, SR_DS_21
+  BR_DS_10
+    -> SR_DS_28, SR_INT_16
+  BR_DS_10_Traverse_SE-01
+    -> SR_INT_16, SR_INT_26
+  BR_DS_11
+    -> SR_DS_26
+  BR_DS_12
+    -> SR_DS_29
+  BR_DS_13
+    -> SR_DS_30, SR_FW_05
+  BR_DS_14
+    -> SR_DS_32, SR_DS_34
+  BR_DS_15
+    -> SR_DS_14
+  BR_DS_16
+    -> SR_DS_33, SR_INT_24, SR_GOV_71
+
+[3. Connection]
+  BR_CONN_01
+    -> SR_CONN_01, SR_CONN_01_BE-01, SR_CONN_02, SR_CONN_03, SR_CONN_04, SR_CONN_04_SE-01, SR_CONN_05, SR_CONN_05_SE-01, SR_CONN_05_SE-02, SR_CONN_05_BE-01, SR_CONN_06, SR_CONN_07, SR_CONN_08, SR_CONN_09, SR_CONN_10, SR_GOV_76
+  BR_CONN_02
+    -> SR_CONN_11
+  BR_CONN_02_Authenticate_BE-01
+    -> SR_CONN_11
+  BR_CONN_02_Authenticate_SE-01
+    -> SR_CONN_11
+  BR_CONN_03
+    -> SR_CONN_12
+  BR_CONN_04
+    -> SR_CONN_13, SR_CONN_13_BE-01
+  BR_CONN_05
+    -> SR_CONN_14, SR_CONN_14_SE-01
+  BR_CONN_05_TokenRequest_SE-01
+    -> SR_CONN_14
+  BR_CONN_06
+    -> SR_CONN_15, SR_CONN_15_BE-01
+  BR_CONN_06_Normalize_BE-01
+    -> SR_CONN_15
+  BR_CONN_07
+    -> SR_CONN_16, SR_CONN_16_BE-01
+  BR_CONN_07_UiDrift_BE-01
+    -> SR_CONN_16
+  BR_CONN_08
+    -> SR_CONN_17, SR_GOV_57
+  BR_CONN_09
+    -> SR_CONN_18, SR_CONN_18_BE-01, SR_CONN_18_BE-02
+  BR_CONN_09_Classify_BE-01
+    -> SR_CONN_18, SR_CONN_28
+  BR_CONN_09_Purpose_BE-01
+    -> SR_CONN_18
+  BR_CONN_09_Upload_BE-01
+    -> SR_CONN_18, SR_LLM_25
+  BR_CONN_10
+    -> SR_CONN_19, SR_CONN_20, SR_CONN_21, SR_CONN_22, SR_CONN_23, SR_CONN_24
+  BR_CONN_10_ParseUnknown
+    -> SR_CONN_20
+  BR_CONN_11
+    -> SR_CONN_25, SR_CONN_26, SR_CONN_27, SR_CONN_28, SR_CONN_28_SE-01, SR_CONN_29, SR_CONN_30, SR_CONN_31
+  BR_CONN_11_ClassificationTimeout_SE-01
+    -> SR_CONN_28, SR_CONN_32
+  BR_CONN_11_NerUnavailable_SE-01
+    -> SR_CONN_28
+  BR_CONN_12
+    -> SR_CONN_32, SR_CONN_33
+  BR_CONN_13
+    -> SR_CONN_35, SR_GOV_58
+  BR_CONN_13_Severity_BE-01
+    -> SR_GOV_58
+  BR_CONN_14
+    -> SR_CONN_34, SR_CONN_34_SE-01, SR_CONN_36, SR_SCALE_25
+  BR_CONN_15
+    -> SR_SA_20, SR_SA_21, SR_SA_22
+  BR_CONN_16
+    -> SR_CONN_38, SR_CONN_39, SR_GOV_54
+  BR_CONN_17
+    -> SR_CONN_40, SR_CONN_41, SR_CONN_42, SR_CONN_43, SR_LLM_42
+  BR_CONN_18
+    -> SR_CONN_37, SR_CONN_44
+
+[4. Intelligence]
+  BR_INT_01
+    -> SR_INT_01, SR_INT_02, SR_DM_07, SR_DM_08
+  BR_INT_01_GraphWrite_SE-01
+    -> SR_DM_07, SR_SCALE_15
+  BR_INT_02
+    -> SR_INT_03, SR_INT_04, SR_INT_06, SR_INT_08, SR_INT_11, SR_INT_13
+  BR_INT_02_SecurityClassify_BE-01
+    -> SR_GOV_53, SR_INT_08
+  BR_INT_03
+    -> SR_INT_10
+  BR_INT_04
+    -> SR_INT_09, SR_INT_12, SR_GOV_71
+  BR_INT_05
+    -> SR_INT_23, SR_DM_27, SR_GOV_77
+  BR_INT_05_RewriteQuery_BE-01
+    -> SR_DM_27, SR_DM_28
+  BR_INT_06
+    -> SR_INT_15, SR_GOV_33
+  BR_INT_06_VectorSearch_SE-01
+    -> SR_INT_26
+  BR_INT_07
+    -> SR_INT_16, SR_DS_28
+  BR_INT_08
+    -> SR_INT_05, SR_INT_07
+  BR_INT_09
+    -> SR_INT_06, SR_DM_25
+  BR_INT_10
+    -> SR_DM_28, SR_INT_25
+  BR_INT_10_AuditFinding_BE-01
+    -> SR_DM_28, SR_GOV_51
+  BR_INT_11
+    -> SR_INT_22, SR_GOV_59
+  BR_INT_12
+    -> SR_INT_19
+  BR_INT_13
+    -> SR_INT_17
+  BR_INT_14
+    -> SR_INT_21
+  BR_INT_15
+    -> SR_INT_24, SR_DS_33
+  BR_INT_16
+    -> SR_INT_25, SR_DM_24
+  BR_INT_17
+    -> SR_INT_26, SR_INT_27, SR_INT_28, SR_SCALE_25
+  BR_INT_18
+    -> SR_INT_29, SR_SCALE_40
+  BR_INT_19
+    -> SR_INT_30, SR_GOV_52, SR_DM_30
+
+[5. LLM Routing]
+  BR_LLM_01
+    -> SR_LLM_05, SR_GOV_73
+  BR_LLM_01_PIIOnPrem_BE-01
+    -> SR_LLM_05
+  BR_LLM_02
+    -> SR_LLM_02, SR_LLM_05_BE-01, SR_LLM_10
+  BR_LLM_02_BudgetCheck_BE-01
+    -> SR_LLM_24, SR_SCALE_25
+  BR_LLM_03
+    -> SR_LLM_20, SR_LLM_21, SR_LLM_25, SR_GOV_65
+  BR_LLM_03_InjectionDefense_BE-01
+    -> SR_LLM_25, SR_CONN_18
+  BR_LLM_04
+    -> SR_LLM_11, SR_LLM_12, SR_LLM_13, SR_LLM_14, SR_LLM_15, SR_LLM_16, SR_LLM_17, SR_DM_15
+  BR_LLM_04_CloudAPI_SE-01
+    -> SR_LLM_13, SR_LLM_42, SR_CONN_40
+  BR_LLM_04_Timeout_SE-02
+    -> SR_LLM_11, SR_LLM_12, SR_LLM_13, SR_LLM_14
+  BR_LLM_05
+    -> SR_LLM_30, SR_LLM_31, SR_LLM_32, SR_LLM_33, SR_LLM_34, SR_LLM_35, SR_LLM_36, SR_LLM_26
+  BR_LLM_05_V1_Boundary_BE-01
+    -> SR_LLM_34
+  BR_LLM_05_V3_Entropy_BE-01
+    -> SR_LLM_32
+  BR_LLM_06
+    -> SR_LLM_22, SR_LLM_23, SR_LLM_27
+  BR_LLM_07
+    -> SR_LLM_40, SR_LLM_41, SR_LLM_43, SR_LLM_44, SR_LLM_45, SR_GOV_66
+  BR_LLM_07_PerformanceCheck_BE-01
+    -> SR_LLM_43
+  BR_LLM_08
+    -> SR_DM_19, SR_LLM_46
+  BR_LLM_09
+    -> SR_LLM_50, SR_LLM_51, SR_LLM_52, SR_GOV_60
+  BR_LLM_10
+    -> SR_LLM_60, SR_LLM_61
+  BR_LLM_10_CachePII_BE-01
+    -> SR_LLM_61
+  BR_LLM_11
+    -> SR_LLM_18, SR_LLM_28, SR_LLM_29
+
+[6. Data Model]
+  BR_DM_01
+    -> SR_DM_01, SR_DM_01_SE-01, SR_DM_02, SR_DM_03, SR_DM_04, SR_DM_12, SR_DM_13, SR_DM_14, SR_DM_20, SR_DM_21, SR_DM_22, SR_GOV_01, SR_GOV_01_SE-01, SR_GOV_01_SE-02, SR_GOV_01_BE-01, SR_GOV_01_BE-02, SR_GOV_01_BE-03
+  BR_DM_01_HybridWrite_SE-01
+    -> SR_DM_01
+  BR_DM_02
+    -> SR_DM_22, SR_DM_22_SE-01, SR_DM_22_BE-01, SR_DM_28
+  BR_DM_02_SyncFail_SE-01
+    -> SR_DM_22
+  BR_DM_03
+    -> SR_DM_27, SR_DM_27_SE-01, SR_DM_28, SR_GOV_77
+  BR_DM_03_Rewrite_SE-01
+    -> SR_DM_27
+  BR_DM_04
+    -> SR_DM_28
+  BR_DM_05
+    -> SR_DM_18, SR_DM_19, SR_DM_23
+  BR_DM_06
+    -> SR_DM_07, SR_DM_08
+  BR_DM_07
+    -> SR_DM_09, SR_DM_10, SR_DM_11, SR_DM_11_BE-01
+  BR_DM_07_IllegalTransition_BE-01
+    -> SR_DM_11
+  BR_DM_08
+    -> SR_DM_15, SR_DM_16, SR_DM_17
+  BR_DM_09
+    -> SR_DM_05, SR_DM_06
+  BR_DM_10
+    -> SR_DM_30, SR_DM_31, SR_GOV_52
+  BR_DM_11
+    -> SR_DM_24, SR_INT_25
+  BR_DM_12
+    -> SR_DM_25, SR_DM_26
+
+[7. Interface]
+  BR_UI_01
+    -> SR_UI_01, SR_UI_02, SR_UI_03, SR_UI_03_BE-01, SR_UI_04, SR_UI_06
+  BR_UI_01_MFA_BE-01
+    -> SR_UI_03
+  BR_UI_02
+    -> SR_UI_05, SR_GOV_75
+  BR_UI_03
+    -> SR_UI_07
+  BR_UI_04
+    -> SR_UI_08, SR_UI_21, SR_UI_27
+  BR_UI_05
+    -> SR_UI_09, SR_UI_23, SR_DS_37
+  BR_UI_06
+    -> SR_UI_10, SR_UI_24, SR_INT_20
+  BR_UI_07
+    -> SR_UI_11
+  BR_UI_08
+    -> SR_UI_12
+  BR_UI_09
+    -> SR_UI_13
+  BR_UI_10
+    -> SR_UI_14, SR_UI_15, SR_UI_16, SR_UI_17, SR_UI_18, SR_UI_30, SR_UI_40, SR_UI_41
+  BR_UI_11
+    -> SR_UI_20, SR_LLM_23
+  BR_UI_12
+    -> SR_UI_22, SR_INT_15, SR_GOV_33
+  BR_UI_13
+    -> SR_UI_25, SR_DM_25
+  BR_UI_14
+    -> SR_UI_26
+  BR_UI_15
+    -> SR_UI_27, SR_DS_12
+  BR_UI_16
+    -> SR_UI_28, SR_UI_29, SR_SCALE_30
+  BR_UI_17
+    -> SR_UI_31, SR_UI_32, SR_UI_33, SR_UI_34, SR_UI_44
+  BR_UI_18
+    -> SR_UI_35, SR_GOV_69
+  BR_UI_19
+    -> SR_UI_36, SR_GOV_47
+  BR_UI_20
+    -> SR_UI_37
+  BR_UI_21
+    -> SR_UI_38, SR_UI_39
+  BR_UI_22
+    -> SR_UI_45
+  BR_UI_23
+    -> SR_UI_42
+  BR_UI_24
+    -> SR_UI_43
+
+[8. Component Catalog]
+  BR_CAT_01
+    -> SR_CAT_01, SR_CAT_02, SR_CAT_03, SR_CAT_04, SR_CAT_05, SR_CAT_06, SR_CAT_07, SR_CAT_09, SR_CAT_25
+  BR_CAT_02
+    -> SR_CAT_08, SR_CAT_44
+  BR_CAT_03
+    -> SR_CAT_10, SR_CAT_10_BE-01, SR_CAT_24
+  BR_CAT_03_TestFail_BE-01
+    -> SR_CAT_10
+  BR_CAT_04
+    -> SR_CAT_15, SR_GOV_61, SR_V2_01, SR_V2_05
+  BR_CAT_05
+    -> SR_CAT_20, SR_CAT_21, SR_CAT_22, SR_CAT_22_BE-01, SR_CAT_23, SR_GOV_62
+  BR_CAT_05_SecurityFinding_BE-01
+    -> SR_CAT_22, SR_GOV_62
+  BR_CAT_06
+    -> SR_CAT_30, SR_GOV_78
+  BR_CAT_07
+    -> SR_CAT_31, SR_CAT_31_SE-01, SR_CAT_31_SE-02, SR_CAT_32, SR_CAT_42
+  BR_CAT_07_LimitExceeded_SE-01
+    -> SR_CAT_31
+  BR_CAT_08
+    -> SR_CAT_35, SR_CAT_36
+  BR_CAT_09
+    -> SR_CAT_38, SR_CAT_39, SR_CAT_40, SR_CAT_50
+  BR_CAT_10
+    -> SR_CAT_33, SR_CAT_34
+  BR_CAT_11
+    -> SR_CAT_37
+  BR_CAT_12
+    -> SR_CAT_41, SR_CAT_43
+
+[9. Service Account Catalog]
+  BR_SA_01
+    -> SR_SA_01, SR_SA_02, SR_SA_03, SR_SA_04, SR_SA_05, SR_SA_06, SR_SA_07
+  BR_SA_02
+    -> SR_SA_10, SR_GOV_41
+  BR_SA_03
+    -> SR_SA_11
+  BR_SA_04
+    -> SR_SA_12
+  BR_SA_05
+    -> SR_SA_13, SR_SA_50, SR_SA_53, SR_SA_54, SR_V2_10
+  BR_SA_06
+    -> SR_SA_14, SR_GOV_64, SR_SA_45
+  BR_SA_07
+    -> SR_SA_15
+  BR_SA_08
+    -> SR_SA_20, SR_SA_21, SR_SA_22, SR_SA_22_SE-01
+  BR_SA_08_ProvisionFail_SE-01
+    -> SR_SA_22
+  BR_SA_09
+    -> SR_SA_30, SR_GOV_63
+  BR_SA_10
+    -> SR_SA_35, SR_SA_36, SR_SA_37, SR_SA_38, SR_SA_39, SR_SA_40, SR_SA_41, SR_SA_42, SR_SA_43, SR_SA_44
+  BR_SA_11
+    -> SR_SA_51
+  BR_SA_12
+    -> SR_SA_52
+  BR_SA_13
+    -> SR_SA_55

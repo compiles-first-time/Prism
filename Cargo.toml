@@ -1,0 +1,77 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/prism-core",
+    "crates/prism-governance",
+    "crates/prism-identity",
+    "crates/prism-compliance",
+    "crates/prism-credentials",
+    "crates/prism-lifecycle",
+    "crates/prism-audit",
+    "crates/prism-graph",
+    "crates/prism-llm",
+    "crates/prism-adapters",
+    "crates/prism-runtime",
+    "crates/prism-api",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "LicenseRef-Proprietary"
+repository = "https://github.com/compiles-first-time/Prism"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Web framework
+axum = { version = "0.7", features = ["macros"] }
+tower = { version = "0.4" }
+tower-http = { version = "0.5", features = ["cors", "trace", "compression-gzip"] }
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
+neo4rs = { version = "0.7" }
+redis = { version = "0.25", features = ["tokio-comp", "connection-manager"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Identity and types
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling
+thiserror = "1"
+anyhow = "1"
+
+# Logging / tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Auth / crypto
+jsonwebtoken = "9"
+argon2 = "0.5"
+sha2 = "0.10"
+
+# Config
+dotenvy = "0.15"
+
+# Testing
+tokio-test = "0.4"
+
+# Internal crates
+prism-core = { path = "crates/prism-core" }
+prism-governance = { path = "crates/prism-governance" }
+prism-identity = { path = "crates/prism-identity" }
+prism-compliance = { path = "crates/prism-compliance" }
+prism-credentials = { path = "crates/prism-credentials" }
+prism-lifecycle = { path = "crates/prism-lifecycle" }
+prism-audit = { path = "crates/prism-audit" }
+prism-graph = { path = "crates/prism-graph" }
+prism-llm = { path = "crates/prism-llm" }
+prism-adapters = { path = "crates/prism-adapters" }
+prism-runtime = { path = "crates/prism-runtime" }
