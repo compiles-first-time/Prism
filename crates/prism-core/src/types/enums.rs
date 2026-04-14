@@ -28,6 +28,7 @@ pub enum LifecycleState {
     Sunset,
     Archived,
     Deleted,
+    Rejected,
 }
 
 /// Severity classification for governance events, gaps, and alerts.

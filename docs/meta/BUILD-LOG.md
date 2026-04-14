@@ -4,6 +4,32 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-13 -- Day 3: Tenant model + lifecycle state machine
+
+### Implemented
+- Lifecycle state machine (FOUND S 1.5.1, SR_DM_11): 10 Track-A states, deterministic transitions, `validate_transition()`, `allowed_transitions()`, credential status helpers
+- Added `Rejected` variant to `LifecycleState` enum (was missing from Day 1 scaffold)
+- TenantService (SR_GOV_01): onboard with validation (empty name, empty profiles, nonexistent parent), duplicate detection, audit trail integration
+- PgTenantRepository (SR_DM_01 PG path): create, get_by_id, update, list_by_parent, constraint-based duplicate detection
+- 22 unit tests: 12 for state machine, 10 for TenantService (mock repos)
+
+### Design Decisions
+- State machine is pure logic (no I/O) -- all transitions validated before any persistence
+- `Rejected` state allows return to `Draft` for revision (spec supports this path)
+- TenantService composes TenantRepository + AuditLogger per the proposed pattern from PATTERNS.md
+- PG constraint violations mapped to `PrismError::Conflict` (BE-01)
+- Neo4j dual-write deferred to Week 2 (needs SyncCoordinator)
+
+### Files Changed
+- `crates/prism-lifecycle/src/state_machine.rs` -- full implementation + 12 tests
+- `crates/prism-governance/src/tenant.rs` -- new file, TenantService + 10 tests
+- `crates/prism-governance/src/pg_tenant_repo.rs` -- new file, PG repository
+- `crates/prism-governance/src/lib.rs` -- added tenant + pg_tenant_repo modules
+- `crates/prism-governance/Cargo.toml` -- added prism-audit, sqlx, async-trait deps
+- `crates/prism-core/src/types/enums.rs` -- added Rejected variant to LifecycleState
+
+---
+
 ## Session 2026-04-13 -- Day 2: Merkle chain hasher + audit event store
 
 ### Implemented
