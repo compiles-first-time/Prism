@@ -153,3 +153,31 @@ pub enum Environment {
     Uat,
     Prod,
 }
+
+/// Actor type for audit events (SR_GOV_47).
+/// Identifies whether the actor is a human, a service principal, or the system itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActorType {
+    Human,
+    ServicePrincipal,
+    System,
+}
+
+/// Source layer that produced a governance event (SR_GOV_47).
+/// Maps to the architectural layers in the PRISM spec.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceLayer {
+    Governance,
+    Identity,
+    Compliance,
+    Credentials,
+    Lifecycle,
+    Audit,
+    Graph,
+    Llm,
+    Connection,
+    Runtime,
+    Interface,
+}
