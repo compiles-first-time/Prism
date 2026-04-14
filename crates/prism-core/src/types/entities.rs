@@ -110,6 +110,36 @@ pub struct AuditEvent {
     pub created_at: DateTime<Utc>,
 }
 
+// -- Visibility Compartment (SR_GOV_31) ------------------------------------
+
+/// A visibility compartment that isolates data by classification level.
+/// Criminal-penalty compartments override the default "visibility flows up"
+/// model -- even executives cannot see data without explicit membership.
+/// Implements: SR_GOV_31, GAP-77
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Compartment {
+    pub id: CompartmentId,
+    pub tenant_id: TenantId,
+    pub name: String,
+    pub classification_level: ClassificationLevel,
+    pub purpose: String,
+    pub criminal_penalty_isolation: bool,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// A membership record linking a person or role to a compartment.
+/// Implements: SR_GOV_32
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompartmentMembership {
+    pub compartment_id: CompartmentId,
+    pub tenant_id: TenantId,
+    pub person_id: Option<UserId>,
+    pub role_id: Option<RoleId>,
+    pub added_at: DateTime<Utc>,
+}
+
 // -- Approval Chain ---------------------------------------------------------
 
 /// An approval chain instance computed by the LCA algorithm.

@@ -1,1 +1,712 @@
 //! Visibility compartment engine (GAP-77).
+//!
+//! Compartments isolate data by classification level and enforce
+//! explicit membership for access. Criminal-penalty compartments
+//! override the default "visibility flows up" model -- even executives
+//! cannot see data without explicit membership.
+//!
+//! Implements: SR_GOV_31 (create), SR_GOV_32 (add member), SR_GOV_33 (access check)
+
+use std::sync::Arc;
+
+use chrono::Utc;
+use tracing::info;
+
+use prism_audit::event_store::AuditLogger;
+use prism_core::error::PrismError;
+use prism_core::repository::CompartmentRepository;
+use prism_core::types::*;
+
+/// Service for managing visibility compartments.
+///
+/// Composes:
+/// - `CompartmentRepository` -- persistence for compartments and membership
+/// - `AuditLogger` -- audit trail for all compartment operations
+///
+/// Implements: SR_GOV_31, SR_GOV_32, SR_GOV_33
+pub struct CompartmentService {
+    repo: Arc<dyn CompartmentRepository>,
+    audit: AuditLogger,
+}
+
+impl CompartmentService {
+    /// Create a new compartment service.
+    pub fn new(repo: Arc<dyn CompartmentRepository>, audit: AuditLogger) -> Self {
+        Self { repo, audit }
+    }
+
+    /// Create a visibility compartment with initial members.
+    ///
+    /// Validates:
+    /// - Name is non-empty
+    /// - Purpose is non-empty
+    /// - Criminal-penalty isolation requires Restricted or CriminalPenalty classification
+    /// - At least one initial member (person or role) is provided
+    ///
+    /// Implements: SR_GOV_31
+    pub async fn create(
+        &self,
+        request: &CompartmentCreateRequest,
+    ) -> Result<CompartmentCreateResult, PrismError> {
+        // Validation
+        let name = request.name.trim();
+        if name.is_empty() {
+            return Err(PrismError::Validation {
+                reason: "compartment name cannot be empty".into(),
+            });
+        }
+
+        if request.purpose.trim().is_empty() {
+            return Err(PrismError::Validation {
+                reason: "compartment purpose cannot be empty".into(),
+            });
+        }
+
+        // SR_GOV_31_BE-01: criminal_penalty_isolation requires appropriate classification
+        if request.criminal_penalty_isolation
+            && request.classification_level != ClassificationLevel::Restricted
+            && request.classification_level != ClassificationLevel::CriminalPenalty
+        {
+            return Err(PrismError::Validation {
+                reason: "criminal penalty isolation requires Restricted or CriminalPenalty classification level".into(),
+            });
+        }
+
+        if request.member_persons.is_empty() && request.member_roles.is_empty() {
+            return Err(PrismError::Validation {
+                reason: "compartment must have at least one initial member (person or role)".into(),
+            });
+        }
+
+        let now = Utc::now();
+        let compartment_id = CompartmentId::new();
+
+        let compartment = Compartment {
+            id: compartment_id,
+            tenant_id: request.tenant_id,
+            name: name.to_string(),
+            classification_level: request.classification_level,
+            purpose: request.purpose.clone(),
+            criminal_penalty_isolation: request.criminal_penalty_isolation,
+            is_active: true,
+            created_at: now,
+            updated_at: now,
+        };
+
+        self.repo.create(&compartment).await?;
+
+        // Add initial person members
+        let mut member_count = 0;
+        for person_id in &request.member_persons {
+            let membership = CompartmentMembership {
+                compartment_id,
+                tenant_id: request.tenant_id,
+                person_id: Some(*person_id),
+                role_id: None,
+                added_at: now,
+            };
+            self.repo.add_member(&membership).await?;
+            member_count += 1;
+        }
+
+        // Add initial role members
+        for role_id in &request.member_roles {
+            let membership = CompartmentMembership {
+                compartment_id,
+                tenant_id: request.tenant_id,
+                person_id: None,
+                role_id: Some(*role_id),
+                added_at: now,
+            };
+            self.repo.add_member(&membership).await?;
+            member_count += 1;
+        }
+
+        // Audit trail
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: request.tenant_id,
+                event_type: "compartment.created".into(),
+                actor_id: uuid::Uuid::nil(), // caller provides via context in real usage
+                actor_type: ActorType::Human,
+                target_id: Some(*compartment_id.as_uuid()),
+                target_type: Some("Compartment".into()),
+                severity: if request.criminal_penalty_isolation {
+                    Severity::High
+                } else {
+                    Severity::Medium
+                },
+                source_layer: SourceLayer::Compliance,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "name": name,
+                    "classification_level": request.classification_level,
+                    "criminal_penalty_isolation": request.criminal_penalty_isolation,
+                    "initial_member_count": member_count,
+                }),
+            })
+            .await?;
+
+        info!(
+            compartment_id = %compartment_id,
+            tenant_id = %request.tenant_id,
+            criminal_penalty = request.criminal_penalty_isolation,
+            member_count,
+            "compartment created"
+        );
+
+        Ok(CompartmentCreateResult {
+            compartment_id,
+            member_count,
+            created_at: now,
+        })
+    }
+
+    /// Add a person or role to a compartment.
+    ///
+    /// Validates:
+    /// - Exactly one of person_id or role_id is provided
+    /// - Compartment exists and belongs to the same tenant
+    ///
+    /// Implements: SR_GOV_32
+    pub async fn add_member(
+        &self,
+        request: &CompartmentMembershipAddRequest,
+    ) -> Result<CompartmentMembershipResult, PrismError> {
+        // Exactly one of person_id or role_id
+        match (&request.person_id, &request.role_id) {
+            (None, None) => {
+                return Err(PrismError::Validation {
+                    reason: "exactly one of person_id or role_id must be provided".into(),
+                });
+            }
+            (Some(_), Some(_)) => {
+                return Err(PrismError::Validation {
+                    reason: "provide either person_id or role_id, not both".into(),
+                });
+            }
+            _ => {}
+        }
+
+        // Verify compartment exists and belongs to tenant
+        let compartment = self
+            .repo
+            .get_by_id(request.tenant_id, request.compartment_id)
+            .await?
+            .ok_or_else(|| PrismError::NotFound {
+                entity_type: "Compartment",
+                id: *request.compartment_id.as_uuid(),
+            })?;
+
+        if !compartment.is_active {
+            return Err(PrismError::Validation {
+                reason: "cannot add members to an inactive compartment".into(),
+            });
+        }
+
+        let membership = CompartmentMembership {
+            compartment_id: request.compartment_id,
+            tenant_id: request.tenant_id,
+            person_id: request.person_id,
+            role_id: request.role_id,
+            added_at: Utc::now(),
+        };
+
+        let added = self.repo.add_member(&membership).await?;
+
+        // Audit trail
+        let target_desc = if let Some(pid) = request.person_id {
+            format!("person:{pid}")
+        } else {
+            format!("role:{}", request.role_id.unwrap())
+        };
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: request.tenant_id,
+                event_type: "compartment.member_added".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::Human,
+                target_id: Some(*request.compartment_id.as_uuid()),
+                target_type: Some("Compartment".into()),
+                severity: Severity::Medium,
+                source_layer: SourceLayer::Compliance,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "member": target_desc,
+                    "already_member": !added,
+                }),
+            })
+            .await?;
+
+        Ok(CompartmentMembershipResult {
+            compartment_id: request.compartment_id,
+            added,
+        })
+    }
+
+    /// Check whether a principal can access a compartment-bound resource.
+    ///
+    /// The principal must be a member of ALL compartments the resource belongs to.
+    /// Membership is checked both by person_id and by any of the principal's roles.
+    ///
+    /// Implements: SR_GOV_33
+    pub async fn check_access(
+        &self,
+        request: &CompartmentAccessCheckRequest,
+    ) -> Result<CompartmentAccessCheckResult, PrismError> {
+        if request.resource_compartments.is_empty() {
+            // Resource is not compartment-bound -- allow by default
+            return Ok(CompartmentAccessCheckResult {
+                decision: AccessDecision::Allow,
+                denied_compartments: Vec::new(),
+                reason: None,
+            });
+        }
+
+        let mut denied = Vec::new();
+
+        for &compartment_id in &request.resource_compartments {
+            let is_member = self
+                .repo
+                .is_member(
+                    request.tenant_id,
+                    compartment_id,
+                    request.principal_id,
+                    &request.principal_roles,
+                )
+                .await?;
+
+            if !is_member {
+                denied.push(compartment_id);
+            }
+        }
+
+        let decision = if denied.is_empty() {
+            AccessDecision::Allow
+        } else {
+            AccessDecision::Deny
+        };
+
+        let reason = if denied.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "principal is not a member of {} required compartment(s)",
+                denied.len()
+            ))
+        };
+
+        Ok(CompartmentAccessCheckResult {
+            decision,
+            denied_compartments: denied,
+            reason,
+        })
+    }
+}
+
+// ===========================================================================
+// Tests
+// ===========================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use prism_core::repository::AuditEventRepository;
+    use std::sync::Mutex;
+
+    // -- Mock CompartmentRepository ------------------------------------------
+
+    struct MockCompartmentRepo {
+        compartments: Mutex<Vec<Compartment>>,
+        members: Mutex<Vec<CompartmentMembership>>,
+    }
+
+    impl MockCompartmentRepo {
+        fn new() -> Self {
+            Self {
+                compartments: Mutex::new(Vec::new()),
+                members: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl CompartmentRepository for MockCompartmentRepo {
+        async fn create(&self, compartment: &Compartment) -> Result<(), PrismError> {
+            self.compartments.lock().unwrap().push(compartment.clone());
+            Ok(())
+        }
+
+        async fn get_by_id(
+            &self,
+            tenant_id: TenantId,
+            id: CompartmentId,
+        ) -> Result<Option<Compartment>, PrismError> {
+            let comps = self.compartments.lock().unwrap();
+            Ok(comps
+                .iter()
+                .find(|c| c.id == id && c.tenant_id == tenant_id)
+                .cloned())
+        }
+
+        async fn add_member(&self, membership: &CompartmentMembership) -> Result<bool, PrismError> {
+            let mut members = self.members.lock().unwrap();
+            // Check for duplicate
+            let exists = members.iter().any(|m| {
+                m.compartment_id == membership.compartment_id
+                    && m.tenant_id == membership.tenant_id
+                    && m.person_id == membership.person_id
+                    && m.role_id == membership.role_id
+            });
+            if exists {
+                return Ok(false);
+            }
+            members.push(membership.clone());
+            Ok(true)
+        }
+
+        async fn list_members(
+            &self,
+            tenant_id: TenantId,
+            compartment_id: CompartmentId,
+        ) -> Result<Vec<CompartmentMembership>, PrismError> {
+            let members = self.members.lock().unwrap();
+            Ok(members
+                .iter()
+                .filter(|m| m.compartment_id == compartment_id && m.tenant_id == tenant_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn is_member(
+            &self,
+            tenant_id: TenantId,
+            compartment_id: CompartmentId,
+            person_id: UserId,
+            role_ids: &[RoleId],
+        ) -> Result<bool, PrismError> {
+            let members = self.members.lock().unwrap();
+            Ok(members.iter().any(|m| {
+                m.compartment_id == compartment_id
+                    && m.tenant_id == tenant_id
+                    && (m.person_id == Some(person_id)
+                        || m.role_id.map_or(false, |rid| role_ids.contains(&rid)))
+            }))
+        }
+    }
+
+    // -- Mock AuditEventRepository -------------------------------------------
+
+    struct MockAuditRepo {
+        events: Mutex<Vec<AuditEvent>>,
+    }
+
+    impl MockAuditRepo {
+        fn new() -> Self {
+            Self {
+                events: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl AuditEventRepository for MockAuditRepo {
+        async fn append(&self, event: &AuditEvent) -> Result<(), PrismError> {
+            self.events.lock().unwrap().push(event.clone());
+            Ok(())
+        }
+
+        async fn get_chain_head(
+            &self,
+            tenant_id: TenantId,
+        ) -> Result<Option<AuditEvent>, PrismError> {
+            let events = self.events.lock().unwrap();
+            Ok(events
+                .iter()
+                .filter(|e| e.tenant_id == tenant_id)
+                .max_by_key(|e| e.chain_position)
+                .cloned())
+        }
+
+        async fn query(
+            &self,
+            _request: &AuditQueryRequest,
+        ) -> Result<AuditQueryResult, PrismError> {
+            Ok(AuditQueryResult {
+                events: Vec::new(),
+                next_page_token: None,
+                total_count: 0,
+            })
+        }
+
+        async fn get_chain_segment(
+            &self,
+            _tenant_id: TenantId,
+            _depth: u32,
+        ) -> Result<Vec<AuditEvent>, PrismError> {
+            Ok(Vec::new())
+        }
+    }
+
+    // -- Helpers --------------------------------------------------------------
+
+    fn make_service() -> (CompartmentService, Arc<MockCompartmentRepo>) {
+        let repo = Arc::new(MockCompartmentRepo::new());
+        let audit_repo = Arc::new(MockAuditRepo::new());
+        let audit = AuditLogger::new(audit_repo);
+        let svc = CompartmentService::new(repo.clone(), audit);
+        (svc, repo)
+    }
+
+    fn make_create_request(tenant_id: TenantId) -> CompartmentCreateRequest {
+        CompartmentCreateRequest {
+            tenant_id,
+            name: "BSA/AML Investigations".into(),
+            classification_level: ClassificationLevel::CriminalPenalty,
+            member_persons: vec![UserId::new()],
+            member_roles: vec![],
+            purpose: "Isolate BSA/AML investigation data per 31 USC § 5318(g)(2)".into(),
+            criminal_penalty_isolation: true,
+        }
+    }
+
+    // -- Tests ----------------------------------------------------------------
+
+    #[tokio::test]
+    async fn create_compartment_succeeds() {
+        let (svc, _repo) = make_service();
+        let tenant_id = TenantId::new();
+        let result = svc.create(&make_create_request(tenant_id)).await.unwrap();
+
+        assert_eq!(result.member_count, 1);
+    }
+
+    #[tokio::test]
+    async fn create_rejects_empty_name() {
+        let (svc, _) = make_service();
+        let mut req = make_create_request(TenantId::new());
+        req.name = "  ".into();
+
+        let err = svc.create(&req).await.unwrap_err();
+        assert!(matches!(err, PrismError::Validation { .. }));
+    }
+
+    #[tokio::test]
+    async fn create_rejects_empty_purpose() {
+        let (svc, _) = make_service();
+        let mut req = make_create_request(TenantId::new());
+        req.purpose = "".into();
+
+        let err = svc.create(&req).await.unwrap_err();
+        assert!(matches!(err, PrismError::Validation { .. }));
+    }
+
+    #[tokio::test]
+    async fn create_rejects_criminal_penalty_with_low_classification() {
+        let (svc, _) = make_service();
+        let mut req = make_create_request(TenantId::new());
+        req.classification_level = ClassificationLevel::Internal;
+        // criminal_penalty_isolation is true but classification is Internal
+
+        let err = svc.create(&req).await.unwrap_err();
+        assert!(matches!(err, PrismError::Validation { .. }));
+    }
+
+    #[tokio::test]
+    async fn create_rejects_no_initial_members() {
+        let (svc, _) = make_service();
+        let mut req = make_create_request(TenantId::new());
+        req.member_persons = vec![];
+        req.member_roles = vec![];
+
+        let err = svc.create(&req).await.unwrap_err();
+        assert!(matches!(err, PrismError::Validation { .. }));
+    }
+
+    #[tokio::test]
+    async fn create_with_mixed_members() {
+        let (svc, _) = make_service();
+        let mut req = make_create_request(TenantId::new());
+        req.member_persons = vec![UserId::new(), UserId::new()];
+        req.member_roles = vec![RoleId::new()];
+
+        let result = svc.create(&req).await.unwrap();
+        assert_eq!(result.member_count, 3);
+    }
+
+    #[tokio::test]
+    async fn add_member_person() {
+        let (svc, _) = make_service();
+        let tenant_id = TenantId::new();
+        let create_result = svc.create(&make_create_request(tenant_id)).await.unwrap();
+
+        let add_req = CompartmentMembershipAddRequest {
+            tenant_id,
+            compartment_id: create_result.compartment_id,
+            person_id: Some(UserId::new()),
+            role_id: None,
+        };
+
+        let result = svc.add_member(&add_req).await.unwrap();
+        assert!(result.added);
+    }
+
+    #[tokio::test]
+    async fn add_member_rejects_both_person_and_role() {
+        let (svc, _) = make_service();
+        let tenant_id = TenantId::new();
+        let create_result = svc.create(&make_create_request(tenant_id)).await.unwrap();
+
+        let add_req = CompartmentMembershipAddRequest {
+            tenant_id,
+            compartment_id: create_result.compartment_id,
+            person_id: Some(UserId::new()),
+            role_id: Some(RoleId::new()),
+        };
+
+        let err = svc.add_member(&add_req).await.unwrap_err();
+        assert!(matches!(err, PrismError::Validation { .. }));
+    }
+
+    #[tokio::test]
+    async fn add_member_rejects_neither_person_nor_role() {
+        let (svc, _) = make_service();
+        let tenant_id = TenantId::new();
+        let create_result = svc.create(&make_create_request(tenant_id)).await.unwrap();
+
+        let add_req = CompartmentMembershipAddRequest {
+            tenant_id,
+            compartment_id: create_result.compartment_id,
+            person_id: None,
+            role_id: None,
+        };
+
+        let err = svc.add_member(&add_req).await.unwrap_err();
+        assert!(matches!(err, PrismError::Validation { .. }));
+    }
+
+    #[tokio::test]
+    async fn add_member_to_nonexistent_compartment_fails() {
+        let (svc, _) = make_service();
+        let add_req = CompartmentMembershipAddRequest {
+            tenant_id: TenantId::new(),
+            compartment_id: CompartmentId::new(),
+            person_id: Some(UserId::new()),
+            role_id: None,
+        };
+
+        let err = svc.add_member(&add_req).await.unwrap_err();
+        assert!(matches!(err, PrismError::NotFound { .. }));
+    }
+
+    #[tokio::test]
+    async fn check_access_allows_member() {
+        let (svc, _) = make_service();
+        let tenant_id = TenantId::new();
+        let person_id = UserId::new();
+
+        let mut req = make_create_request(tenant_id);
+        req.member_persons = vec![person_id];
+        let create_result = svc.create(&req).await.unwrap();
+
+        let check = CompartmentAccessCheckRequest {
+            tenant_id,
+            principal_id: person_id,
+            principal_roles: vec![],
+            resource_compartments: vec![create_result.compartment_id],
+        };
+
+        let result = svc.check_access(&check).await.unwrap();
+        assert_eq!(result.decision, AccessDecision::Allow);
+        assert!(result.denied_compartments.is_empty());
+    }
+
+    #[tokio::test]
+    async fn check_access_denies_non_member() {
+        let (svc, _) = make_service();
+        let tenant_id = TenantId::new();
+        let create_result = svc.create(&make_create_request(tenant_id)).await.unwrap();
+
+        let outsider = UserId::new();
+        let check = CompartmentAccessCheckRequest {
+            tenant_id,
+            principal_id: outsider,
+            principal_roles: vec![],
+            resource_compartments: vec![create_result.compartment_id],
+        };
+
+        let result = svc.check_access(&check).await.unwrap();
+        assert_eq!(result.decision, AccessDecision::Deny);
+        assert_eq!(result.denied_compartments.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn check_access_allows_via_role_membership() {
+        let (svc, _) = make_service();
+        let tenant_id = TenantId::new();
+        let role_id = RoleId::new();
+
+        let mut req = make_create_request(tenant_id);
+        req.member_persons = vec![];
+        req.member_roles = vec![role_id];
+        let create_result = svc.create(&req).await.unwrap();
+
+        let person = UserId::new();
+        let check = CompartmentAccessCheckRequest {
+            tenant_id,
+            principal_id: person,
+            principal_roles: vec![role_id],
+            resource_compartments: vec![create_result.compartment_id],
+        };
+
+        let result = svc.check_access(&check).await.unwrap();
+        assert_eq!(result.decision, AccessDecision::Allow);
+    }
+
+    #[tokio::test]
+    async fn check_access_requires_all_compartments() {
+        let (svc, _) = make_service();
+        let tenant_id = TenantId::new();
+        let person_id = UserId::new();
+
+        // Create two compartments, person is member of only the first
+        let mut req1 = make_create_request(tenant_id);
+        req1.member_persons = vec![person_id];
+        let c1 = svc.create(&req1).await.unwrap();
+
+        let mut req2 = make_create_request(tenant_id);
+        req2.name = "SOX Financial".into();
+        req2.member_persons = vec![UserId::new()]; // different person
+        req2.criminal_penalty_isolation = false;
+        req2.classification_level = ClassificationLevel::Confidential;
+        let c2 = svc.create(&req2).await.unwrap();
+
+        let check = CompartmentAccessCheckRequest {
+            tenant_id,
+            principal_id: person_id,
+            principal_roles: vec![],
+            resource_compartments: vec![c1.compartment_id, c2.compartment_id],
+        };
+
+        let result = svc.check_access(&check).await.unwrap();
+        assert_eq!(result.decision, AccessDecision::Deny);
+        // Should deny on the second compartment
+        assert_eq!(result.denied_compartments, vec![c2.compartment_id]);
+    }
+
+    #[tokio::test]
+    async fn check_access_allows_unbound_resource() {
+        let (svc, _) = make_service();
+        let check = CompartmentAccessCheckRequest {
+            tenant_id: TenantId::new(),
+            principal_id: UserId::new(),
+            principal_roles: vec![],
+            resource_compartments: vec![], // not compartment-bound
+        };
+
+        let result = svc.check_access(&check).await.unwrap();
+        assert_eq!(result.decision, AccessDecision::Allow);
+    }
+}

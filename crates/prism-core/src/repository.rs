@@ -76,6 +76,45 @@ pub trait ServicePrincipalRepository: Send + Sync {
     async fn deactivate(&self, id: ServicePrincipalId) -> Result<(), PrismError>;
 }
 
+// -- Compartment Repository (SR_GOV_31) -------------------------------------
+
+/// Persistence operations for visibility compartments.
+/// Implements: SR_GOV_31, SR_GOV_32, SR_GOV_33
+#[async_trait]
+pub trait CompartmentRepository: Send + Sync {
+    /// Create a new compartment.
+    /// Implements: SR_GOV_31
+    async fn create(&self, compartment: &Compartment) -> Result<(), PrismError>;
+
+    /// Retrieve a compartment by ID.
+    async fn get_by_id(
+        &self,
+        tenant_id: TenantId,
+        id: CompartmentId,
+    ) -> Result<Option<Compartment>, PrismError>;
+
+    /// Add a membership record (person or role).
+    /// Implements: SR_GOV_32
+    async fn add_member(&self, membership: &CompartmentMembership) -> Result<bool, PrismError>;
+
+    /// List members of a compartment.
+    async fn list_members(
+        &self,
+        tenant_id: TenantId,
+        compartment_id: CompartmentId,
+    ) -> Result<Vec<CompartmentMembership>, PrismError>;
+
+    /// Check if a person is a member of a compartment (directly or via role).
+    /// Implements: SR_GOV_33
+    async fn is_member(
+        &self,
+        tenant_id: TenantId,
+        compartment_id: CompartmentId,
+        person_id: UserId,
+        role_ids: &[RoleId],
+    ) -> Result<bool, PrismError>;
+}
+
 // -- Audit Event Repository (SR_DM_05) --------------------------------------
 
 /// Persistence operations for the append-only audit event store.

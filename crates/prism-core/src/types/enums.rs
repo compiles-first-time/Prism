@@ -165,6 +165,33 @@ pub enum ActorType {
     System,
 }
 
+/// Classification level for visibility compartments.
+/// Determines the sensitivity of data within the compartment.
+/// Implements: SR_GOV_31
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClassificationLevel {
+    /// Publicly available information.
+    Public,
+    /// Internal use only.
+    Internal,
+    /// Confidential -- limited distribution.
+    Confidential,
+    /// Restricted -- need-to-know basis.
+    Restricted,
+    /// Criminal penalty -- statutory penalties for unauthorized disclosure.
+    CriminalPenalty,
+}
+
+/// Access decision for compartment-gated operations.
+/// Implements: SR_GOV_33
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessDecision {
+    Allow,
+    Deny,
+}
+
 /// Export format for audit trail regulatory exports.
 /// Implements: SR_GOV_50
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

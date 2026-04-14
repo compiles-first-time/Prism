@@ -19,6 +19,9 @@
 | SR_GOV_49 | Audit query | **Done** | prism-audit | event_store.rs | 1 unit | Day 2 |
 | SR_GOV_50 | Audit export | **Done** | prism-audit | audit_export.rs | 6 unit | Week 2 Day 6 |
 | SR_GOV_51 | Tamper response | **Done** | prism-audit | tamper_response.rs | 6 unit | Week 2 Day 6 |
+| SR_GOV_31 | Compartment creation | **Done** | prism-compliance | compartment.rs | 6 unit | Week 2 Day 7 |
+| SR_GOV_32 | Compartment member add | **Done** | prism-compliance | compartment.rs | 4 unit | Week 2 Day 7 |
+| SR_GOV_33 | Compartment access check | **Done** | prism-compliance | compartment.rs | 5 unit | Week 2 Day 7 |
 | SR_GOV_52 | Crypto-shredding | Deferred | prism-compliance | crypto_shredding.rs | -- | Week 3+ (needs CaaS) |
 | SR_DM_01 | Tenant node creation | **Done** | prism-governance | pg_tenant_repo.rs | -- | Day 3 (PG only; Neo4j Week 2) |
 | SR_DM_02 | Person node creation | **Done** | prism-identity | pg_repository.rs | -- | Day 4 (PG only) |

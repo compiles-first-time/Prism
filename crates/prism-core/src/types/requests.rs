@@ -177,6 +177,77 @@ pub struct TamperResponseResult {
     pub incident_id: String,
 }
 
+// -- Visibility compartment requests (SR_GOV_31, SR_GOV_32, SR_GOV_33) -------
+
+/// Request to create a visibility compartment.
+/// Implements: SR_GOV_31
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompartmentCreateRequest {
+    pub tenant_id: TenantId,
+    pub name: String,
+    pub classification_level: ClassificationLevel,
+    /// Initial member persons (added at creation time).
+    pub member_persons: Vec<UserId>,
+    /// Initial member roles (added at creation time).
+    pub member_roles: Vec<RoleId>,
+    pub purpose: String,
+    /// When true, overrides "visibility flows up" -- even executives
+    /// cannot see data without explicit membership.
+    pub criminal_penalty_isolation: bool,
+}
+
+/// Result of compartment creation.
+/// Implements: SR_GOV_31
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompartmentCreateResult {
+    pub compartment_id: CompartmentId,
+    pub member_count: usize,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Request to add a person or role to a compartment.
+/// Exactly one of person_id or role_id must be provided.
+/// Implements: SR_GOV_32
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompartmentMembershipAddRequest {
+    pub tenant_id: TenantId,
+    pub compartment_id: CompartmentId,
+    pub person_id: Option<UserId>,
+    pub role_id: Option<RoleId>,
+}
+
+/// Result of a membership operation.
+/// Implements: SR_GOV_32
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompartmentMembershipResult {
+    pub compartment_id: CompartmentId,
+    pub added: bool,
+}
+
+/// Request to check whether a principal can access a compartment-bound resource.
+/// The principal must be a member of ALL compartments the resource belongs to.
+/// Implements: SR_GOV_33
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompartmentAccessCheckRequest {
+    pub tenant_id: TenantId,
+    /// The principal (person) requesting access.
+    pub principal_id: UserId,
+    /// The roles currently held by the principal.
+    pub principal_roles: Vec<RoleId>,
+    /// The compartments the target resource belongs to.
+    pub resource_compartments: Vec<CompartmentId>,
+}
+
+/// Result of a compartment access check.
+/// Implements: SR_GOV_33
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompartmentAccessCheckResult {
+    pub decision: AccessDecision,
+    /// Compartments that denied access (empty if allowed).
+    pub denied_compartments: Vec<CompartmentId>,
+    pub reason: Option<String>,
+}
+
 // -- Lifecycle requests (FOUND S 1.5.1) -------------------------------------
 
 /// A validated state transition produced by the lifecycle state machine.

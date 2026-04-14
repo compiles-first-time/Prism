@@ -4,6 +4,46 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-13 -- Day 7 (Week 2): Visibility compartments (SR_GOV_31-33)
+
+### Implemented
+- CompartmentService (SR_GOV_31, SR_GOV_32, SR_GOV_33): visibility compartment engine for criminal-penalty data isolation
+  - SR_GOV_31 create(): compartment with classification level, purpose, initial members, criminal_penalty_isolation flag
+  - SR_GOV_32 add_member(): add person or role to compartment with validation (exactly one of person/role)
+  - SR_GOV_33 check_access(): principal must be member of ALL resource compartments (direct or via role)
+  - SR_GOV_31_BE-01: criminal penalty isolation requires Restricted or CriminalPenalty classification
+  - Audit trail integration for create and add_member operations
+- Compartment + CompartmentMembership entities in prism-core
+- ClassificationLevel + AccessDecision enums in prism-core
+- CompartmentRepository trait in prism-core
+- Request/result types: CompartmentCreateRequest/Result, CompartmentMembershipAddRequest/Result, CompartmentAccessCheckRequest/Result
+- Migration 009_create_compartments.sql: compartments + compartment_members tables with indexes
+- 15 unit tests covering creation, validation, member management, and access checks
+
+### Design Decisions
+- Compartments live in prism-compliance (not prism-governance) since they are a compliance mechanism
+- Access check is ALL-compartments (principal must be member of every compartment the resource belongs to)
+- Role-based membership: if a person holds a role that is a compartment member, they get access
+- Default-allow for non-compartment-bound resources (empty compartment list = allow)
+- Criminal-penalty flag only valid for Restricted or CriminalPenalty classification levels
+- Initial members are required at creation time (no empty compartments)
+
+### Files Changed
+- `crates/prism-core/src/types/entities.rs` -- added Compartment + CompartmentMembership
+- `crates/prism-core/src/types/enums.rs` -- added ClassificationLevel + AccessDecision
+- `crates/prism-core/src/types/requests.rs` -- added 6 request/result types for SR_GOV_31-33
+- `crates/prism-core/src/repository.rs` -- added CompartmentRepository trait
+- `crates/prism-compliance/src/compartment.rs` -- CompartmentService + 15 tests
+- `crates/prism-compliance/Cargo.toml` -- added prism-audit, async-trait, dev-deps
+- `migrations/009_create_compartments.sql` -- new migration
+
+### Test Summary
+- 15 new tests in prism-compliance
+- 71 total workspace tests, all passing
+- All quality gates green: fmt, clippy, test, check
+
+---
+
 ## Session 2026-04-13 -- Day 6 (Week 2): SR_GOV_50 audit export + SR_GOV_51 tamper response
 
 ### Implemented
