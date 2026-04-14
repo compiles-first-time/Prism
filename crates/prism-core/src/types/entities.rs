@@ -470,3 +470,67 @@ pub struct ReviewQueueEntry {
     pub created_at: DateTime<Utc>,
     pub resolved: bool,
 }
+
+// -- Intelligence Layer: Process Candidate (SR_INT_10) ----------------------
+
+/// A candidate Process node proposed by the process-emergence detector.
+/// Awaits human confirmation; expires after 30 days if not resolved.
+/// Implements: SR_INT_10
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessCandidate {
+    pub id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    pub suggested_name: String,
+    pub component_ids: Vec<uuid::Uuid>,
+    pub confidence: f64,
+    pub created_at: DateTime<Utc>,
+    pub status: String,
+}
+
+// -- Intelligence Layer: Data Group Membership (SR_INT_11) ------------------
+
+/// A DataGroup membership edge (`MEMBER_OF`) between a DataGroup and a
+/// DataCollection, per D-48.
+/// Implements: SR_INT_11
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataGroupMembership {
+    pub group_id: uuid::Uuid,
+    pub collection_id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    pub added_at: DateTime<Utc>,
+}
+
+// -- Intelligence Layer: Completeness Tag (SR_INT_13) -----------------------
+
+/// Completeness tag applied to a DataCollection node, per D-50.
+/// Implements: SR_INT_13
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompletenessTag {
+    pub collection_id: uuid::Uuid,
+    pub status: CompletenessStatus,
+    pub missing_fields: Vec<String>,
+    pub tagged_at: DateTime<Utc>,
+}
+
+// -- Intelligence Layer: Recommendation Accuracy (SR_INT_14) ----------------
+
+/// Recommendation accuracy counters for a DataCollection, per D-56.
+/// Implements: SR_INT_14
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecommendationAccuracy {
+    pub collection_id: uuid::Uuid,
+    pub used_in_count: u64,
+    pub accurate_count: u64,
+    pub accuracy_rate: f64,
+}
+
+// -- Intelligence Layer: Search Result (SR_INT_15) --------------------------
+
+/// A single semantic-search candidate after compartment post-filter.
+/// Implements: SR_INT_15
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub source_id: String,
+    pub similarity: f64,
+    pub compartment_allowed: bool,
+}

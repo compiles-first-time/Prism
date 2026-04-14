@@ -537,6 +537,38 @@ pub enum TrendDirection {
     Volatile,
 }
 
+/// Coverage dimension tracked by the `REUSABLE_CoverageCalculator`.
+/// Implements: SR_INT_09
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoverageDimension {
+    System,
+    Process,
+    Data,
+    Department,
+    Relationship,
+}
+
+/// Category of a tag, used by the tag-weight evaluator (D-49).
+/// Implements: SR_INT_12
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TagCategory {
+    Security,
+    Business,
+    Technical,
+}
+
+/// Completeness status recorded on a DataCollection (D-50).
+/// Implements: SR_INT_13
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletenessStatus {
+    Full,
+    Partial,
+    Sampled,
+}
+
 /// Source layer that produced a governance event (SR_GOV_47).
 /// Maps to the architectural layers in the PRISM spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

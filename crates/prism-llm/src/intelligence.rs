@@ -1,7 +1,9 @@
-//! Intelligence Layer: graph growth and six-stage tagging pipeline.
+//! Intelligence Layer: graph growth, six-stage tagging pipeline, coverage,
+//! process mapping, vector search, and maintenance.
 //!
 //! Implements: SR_INT_01, SR_INT_02, SR_INT_03, SR_INT_04, SR_INT_05,
-//!             SR_INT_06, SR_INT_07, SR_INT_08
+//!             SR_INT_06, SR_INT_07, SR_INT_08, SR_INT_09, SR_INT_10,
+//!             SR_INT_11, SR_INT_12, SR_INT_13, SR_INT_14, SR_INT_15
 //!
 //! Per Spec 04 Section 1:
 //!
@@ -822,6 +824,613 @@ pub fn default_retention_until(timestamp: DateTime<Utc>) -> DateTime<Utc> {
 }
 
 // ============================================================================
+// SR_INT_09 -- CoverageCalculator
+// ============================================================================
+
+/// Per-dimension raw counts used by the coverage calculator.
+///
+/// Each pair `(known, total)` represents how much of the dimension is
+/// currently covered by the tenant graph. Values of `total = 0` mean the
+/// dimension is not applicable and the coverage is reported as `1.0`.
+///
+/// Implements: SR_INT_09
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CoverageCounts {
+    pub systems_known: u64,
+    pub systems_total: u64,
+    pub processes_known: u64,
+    pub processes_total: u64,
+    pub data_collections_known: u64,
+    pub data_collections_total: u64,
+    pub departments_known: u64,
+    pub departments_total: u64,
+    pub relationships_known: u64,
+    pub relationships_total: u64,
+}
+
+/// Source of per-dimension coverage counts, implemented over the graph store.
+///
+/// Implements: SR_INT_09
+#[async_trait]
+pub trait CoverageSource: Send + Sync {
+    async fn get_counts(&self, tenant_id: TenantId) -> Result<CoverageCounts, PrismError>;
+}
+
+/// Compute coverage percentages across the five dimensions and emit an
+/// audit event so downstream services (`SR_GOV_71`, `SR_DS_*`) can weight
+/// their confidence accordingly.
+///
+/// Implements: SR_INT_09
+pub struct CoverageCalculator {
+    source: Arc<dyn CoverageSource>,
+    audit: AuditLogger,
+}
+
+impl CoverageCalculator {
+    pub fn new(source: Arc<dyn CoverageSource>, audit: AuditLogger) -> Self {
+        Self { source, audit }
+    }
+
+    /// Compute per-dimension coverage, collect limitations for dimensions
+    /// below 50%, and log the `intelligence.coverage_computed` audit event.
+    ///
+    /// Implements: SR_INT_09
+    pub async fn compute(&self, input: CoverageRequest) -> Result<CoverageResult, PrismError> {
+        let counts = self.source.get_counts(input.tenant_id).await?;
+
+        let pct = |known: u64, total: u64| -> f64 {
+            if total == 0 {
+                1.0
+            } else {
+                (known as f64) / (total as f64)
+            }
+        };
+
+        let dimensions = vec![
+            (
+                CoverageDimension::System,
+                pct(counts.systems_known, counts.systems_total),
+            ),
+            (
+                CoverageDimension::Process,
+                pct(counts.processes_known, counts.processes_total),
+            ),
+            (
+                CoverageDimension::Data,
+                pct(counts.data_collections_known, counts.data_collections_total),
+            ),
+            (
+                CoverageDimension::Department,
+                pct(counts.departments_known, counts.departments_total),
+            ),
+            (
+                CoverageDimension::Relationship,
+                pct(counts.relationships_known, counts.relationships_total),
+            ),
+        ];
+
+        let limitations: Vec<String> = dimensions
+            .iter()
+            .filter(|(_, p)| *p < 0.5)
+            .map(|(d, p)| format!("{:?} coverage at {:.0}% (<50%)", d, p * 100.0))
+            .collect();
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "intelligence.coverage_computed".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("Coverage".into()),
+                severity: if limitations.is_empty() {
+                    Severity::Low
+                } else {
+                    Severity::Medium
+                },
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "limitations_count": limitations.len(),
+                }),
+            })
+            .await?;
+
+        Ok(CoverageResult {
+            dimensions,
+            limitations,
+        })
+    }
+}
+
+// ============================================================================
+// SR_INT_10 -- ProcessEmergenceDetector
+// ============================================================================
+
+/// Pattern matcher that finds emergent `Process` candidates by correlating
+/// field overlap, FEEDS edges, and timing patterns between components and
+/// DataCollections.
+///
+/// Implements: SR_INT_10
+#[async_trait]
+pub trait ProcessPatternMatcher: Send + Sync {
+    async fn find_process_candidates(
+        &self,
+        tenant_id: TenantId,
+    ) -> Result<Vec<ProcessCandidate>, PrismError>;
+}
+
+/// Discovery window after which unconfirmed candidates are considered expired.
+///
+/// Per Spec 04 Section 2 Q&A #2: candidates that are never confirmed expire
+/// after 30 days and are demoted to `discarded`.
+///
+/// Implements: SR_INT_10
+pub const PROCESS_CANDIDATE_EXPIRY_DAYS: i64 = 30;
+
+/// Detect emergent `Process` candidates, materialize them as graph nodes in
+/// status `pending_confirmation`, and emit one audit event per candidate.
+///
+/// Implements: SR_INT_10
+pub struct ProcessEmergenceDetector {
+    matcher: Arc<dyn ProcessPatternMatcher>,
+    writer: Arc<dyn GraphWriter>,
+    audit: AuditLogger,
+}
+
+impl ProcessEmergenceDetector {
+    pub fn new(
+        matcher: Arc<dyn ProcessPatternMatcher>,
+        writer: Arc<dyn GraphWriter>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self {
+            matcher,
+            writer,
+            audit,
+        }
+    }
+
+    /// Find candidates, write them to the graph with an expiry timestamp, and
+    /// audit each discovery.
+    ///
+    /// Implements: SR_INT_10
+    pub async fn discover(
+        &self,
+        input: ProcessDiscoveryInput,
+    ) -> Result<ProcessDiscoveryResult, PrismError> {
+        let mut candidates = self
+            .matcher
+            .find_process_candidates(input.tenant_id)
+            .await?;
+
+        for candidate in candidates.iter_mut() {
+            candidate.status = "pending_confirmation".to_string();
+            let expires_at = candidate.created_at + Duration::days(PROCESS_CANDIDATE_EXPIRY_DAYS);
+
+            let properties = serde_json::json!({
+                "candidate_id": candidate.id.to_string(),
+                "suggested_name": candidate.suggested_name,
+                "component_ids": candidate.component_ids
+                    .iter()
+                    .map(|c| c.to_string())
+                    .collect::<Vec<_>>(),
+                "confidence": candidate.confidence,
+                "status": candidate.status,
+                "expires_at": expires_at,
+            });
+
+            let node_id = self
+                .writer
+                .create_node(input.tenant_id, "ProcessCandidate", properties.clone())
+                .await?;
+
+            self.audit
+                .log(AuditEventInput {
+                    tenant_id: input.tenant_id,
+                    event_type: "intelligence.process_discovered".into(),
+                    actor_id: uuid::Uuid::nil(),
+                    actor_type: ActorType::System,
+                    target_id: Some(node_id),
+                    target_type: Some("ProcessCandidate".into()),
+                    severity: Severity::Low,
+                    source_layer: SourceLayer::Llm,
+                    governance_authority: None,
+                    payload: properties,
+                })
+                .await?;
+        }
+
+        Ok(ProcessDiscoveryResult { candidates })
+    }
+}
+
+// ============================================================================
+// SR_INT_11 -- DataGroupMembershipService
+// ============================================================================
+
+/// Repository for DataGroup membership (per D-48).
+///
+/// Implements: SR_INT_11
+#[async_trait]
+pub trait DataGroupRepository: Send + Sync {
+    /// Add a membership row. Returns `Ok(false)` if the membership already
+    /// exists (idempotent).
+    async fn add_member(&self, membership: &DataGroupMembership) -> Result<bool, PrismError>;
+
+    async fn get_members(
+        &self,
+        tenant_id: TenantId,
+        group_id: uuid::Uuid,
+    ) -> Result<Vec<DataGroupMembership>, PrismError>;
+
+    async fn remove_member(
+        &self,
+        tenant_id: TenantId,
+        group_id: uuid::Uuid,
+        collection_id: uuid::Uuid,
+    ) -> Result<(), PrismError>;
+}
+
+/// Service that materializes `MEMBER_OF` edges grouping DataCollections into
+/// DataGroup nodes (D-48).
+///
+/// Implements: SR_INT_11
+pub struct DataGroupMembershipService {
+    repo: Arc<dyn DataGroupRepository>,
+    writer: Arc<dyn GraphWriter>,
+}
+
+impl DataGroupMembershipService {
+    pub fn new(repo: Arc<dyn DataGroupRepository>, writer: Arc<dyn GraphWriter>) -> Self {
+        Self { repo, writer }
+    }
+
+    /// Add each collection as a member of the group, creating a `MEMBER_OF`
+    /// edge node for each newly added membership (duplicates are skipped).
+    ///
+    /// Implements: SR_INT_11
+    pub async fn add_to_group(
+        &self,
+        input: DataGroupingInput,
+    ) -> Result<DataGroupingResult, PrismError> {
+        let mut added: u32 = 0;
+
+        for collection_id in input.collection_ids.iter().copied() {
+            let membership = DataGroupMembership {
+                group_id: input.group_id,
+                collection_id,
+                tenant_id: input.tenant_id,
+                added_at: Utc::now(),
+            };
+
+            let inserted = self.repo.add_member(&membership).await?;
+            if !inserted {
+                continue;
+            }
+
+            let properties = serde_json::json!({
+                "group_id": input.group_id.to_string(),
+                "collection_id": collection_id.to_string(),
+                "edge_type": "MEMBER_OF",
+            });
+
+            self.writer
+                .create_node(input.tenant_id, "MemberOfEdge", properties)
+                .await?;
+
+            added += 1;
+        }
+
+        Ok(DataGroupingResult {
+            members_added: added,
+        })
+    }
+}
+
+// ============================================================================
+// SR_INT_12 -- TagWeightService
+// ============================================================================
+
+/// Default tag weights per D-49.
+///
+/// Implements: SR_INT_12
+pub const DEFAULT_TAG_WEIGHT_SECURITY: f64 = 1.0;
+/// Implements: SR_INT_12
+pub const DEFAULT_TAG_WEIGHT_BUSINESS: f64 = 0.7;
+/// Implements: SR_INT_12
+pub const DEFAULT_TAG_WEIGHT_TECHNICAL: f64 = 0.5;
+
+/// Per-tenant tag-weight override config repository. Returns the overrides
+/// for a tenant (categories not present fall back to defaults).
+///
+/// Implements: SR_INT_12
+#[async_trait]
+pub trait TagWeightConfigRepository: Send + Sync {
+    async fn get_overrides(
+        &self,
+        tenant_id: TenantId,
+    ) -> Result<Vec<(TagCategory, f64)>, PrismError>;
+}
+
+/// Evaluate tag weights for a tenant operation, layering tenant overrides on
+/// top of the D-49 defaults.
+///
+/// Implements: SR_INT_12
+pub struct TagWeightService {
+    repo: Arc<dyn TagWeightConfigRepository>,
+}
+
+impl TagWeightService {
+    pub fn new(repo: Arc<dyn TagWeightConfigRepository>) -> Self {
+        Self { repo }
+    }
+
+    fn default_weight(category: TagCategory) -> f64 {
+        match category {
+            TagCategory::Security => DEFAULT_TAG_WEIGHT_SECURITY,
+            TagCategory::Business => DEFAULT_TAG_WEIGHT_BUSINESS,
+            TagCategory::Technical => DEFAULT_TAG_WEIGHT_TECHNICAL,
+        }
+    }
+
+    /// Resolve the effective weight for each requested tag category.
+    ///
+    /// Implements: SR_INT_12
+    pub async fn compute_weights(
+        &self,
+        input: TagWeightInput,
+    ) -> Result<TagWeightResult, PrismError> {
+        let overrides = self.repo.get_overrides(input.tenant_id).await?;
+
+        let weights = input
+            .tag_categories
+            .into_iter()
+            .map(|category| {
+                let w = overrides
+                    .iter()
+                    .find(|(c, _)| *c == category)
+                    .map(|(_, w)| *w)
+                    .unwrap_or_else(|| Self::default_weight(category));
+                (category, w)
+            })
+            .collect();
+
+        Ok(TagWeightResult { weights })
+    }
+}
+
+// ============================================================================
+// SR_INT_13 -- CompletenessTagService
+// ============================================================================
+
+/// Apply completeness metadata (D-50) onto a DataCollection node so that
+/// Decision Support can weight partial data lower than full data.
+///
+/// Implements: SR_INT_13
+pub struct CompletenessTagService {
+    writer: Arc<dyn GraphWriter>,
+}
+
+impl CompletenessTagService {
+    pub fn new(writer: Arc<dyn GraphWriter>) -> Self {
+        Self { writer }
+    }
+
+    /// Write the `completeness_status` and `missing_fields` properties onto
+    /// the DataCollection node.
+    ///
+    /// Implements: SR_INT_13
+    pub async fn apply(
+        &self,
+        input: CompletenessTagInput,
+    ) -> Result<CompletenessTagResult, PrismError> {
+        let properties = serde_json::json!({
+            "collection_id": input.collection_id.to_string(),
+            "completeness_status": serde_json::to_value(input.status)
+                .map_err(|e| PrismError::Serialization(e.to_string()))?,
+            "missing_fields": input.missing_fields,
+            "tagged_at": Utc::now(),
+        });
+
+        self.writer
+            .create_node(input.tenant_id, "DataCollectionCompleteness", properties)
+            .await?;
+
+        Ok(CompletenessTagResult { tagged: true })
+    }
+}
+
+// ============================================================================
+// SR_INT_14 -- RecommendationAccuracyService
+// ============================================================================
+
+/// Repository for per-collection recommendation accuracy counters (D-56).
+///
+/// Implements: SR_INT_14
+#[async_trait]
+pub trait RecommendationAccuracyRepository: Send + Sync {
+    async fn get(
+        &self,
+        tenant_id: TenantId,
+        collection_id: uuid::Uuid,
+    ) -> Result<Option<RecommendationAccuracy>, PrismError>;
+
+    async fn upsert(
+        &self,
+        tenant_id: TenantId,
+        accuracy: &RecommendationAccuracy,
+    ) -> Result<(), PrismError>;
+}
+
+/// Maintain the `recommendation_track_record` counters on each DataCollection
+/// so Decision Support can prefer historically accurate sources.
+///
+/// Implements: SR_INT_14
+pub struct RecommendationAccuracyService {
+    repo: Arc<dyn RecommendationAccuracyRepository>,
+}
+
+impl RecommendationAccuracyService {
+    pub fn new(repo: Arc<dyn RecommendationAccuracyRepository>) -> Self {
+        Self { repo }
+    }
+
+    /// Increment `used_in_count` (and `accurate_count` when accurate), then
+    /// recompute `accuracy_rate`. Creates a fresh record on first update.
+    ///
+    /// Implements: SR_INT_14
+    pub async fn update_accuracy(
+        &self,
+        input: AccuracyUpdateInput,
+    ) -> Result<AccuracyUpdateResult, PrismError> {
+        let current = self.repo.get(input.tenant_id, input.collection_id).await?;
+
+        let mut record = current.unwrap_or(RecommendationAccuracy {
+            collection_id: input.collection_id,
+            used_in_count: 0,
+            accurate_count: 0,
+            accuracy_rate: 0.0,
+        });
+
+        record.used_in_count = record.used_in_count.saturating_add(1);
+        if input.was_accurate {
+            record.accurate_count = record.accurate_count.saturating_add(1);
+        }
+        record.accuracy_rate = if record.used_in_count == 0 {
+            0.0
+        } else {
+            (record.accurate_count as f64) / (record.used_in_count as f64)
+        };
+
+        self.repo.upsert(input.tenant_id, &record).await?;
+
+        Ok(AccuracyUpdateResult {
+            updated: true,
+            new_rate: record.accuracy_rate,
+        })
+    }
+}
+
+// ============================================================================
+// SR_INT_15 -- VectorSemanticSearchService
+// ============================================================================
+
+/// Vector-index reader abstraction (SR_DM_18 consumer side).
+///
+/// Returns `(source_id, similarity)` pairs ordered by similarity descending.
+///
+/// Implements: SR_INT_15
+#[async_trait]
+pub trait VectorIndex: Send + Sync {
+    async fn search(&self, query: &[f32], top_k: usize) -> Result<Vec<(String, f64)>, PrismError>;
+}
+
+/// Compartment access checker (SR_GOV_33 consumer side).
+///
+/// Returns `true` if the principal is allowed to see the resource, `false`
+/// otherwise.
+///
+/// Implements: SR_INT_15
+#[async_trait]
+pub trait CompartmentAccessChecker: Send + Sync {
+    async fn is_allowed(
+        &self,
+        principal_id: UserId,
+        principal_roles: &[RoleId],
+        resource_id: &str,
+    ) -> Result<bool, PrismError>;
+}
+
+/// Vector semantic search with compartment post-filter per IL-7 / BP-101.
+///
+/// The post-filter flow is: over-fetch `top_k * 2` candidates from the vector
+/// index, drop anything the compartment checker denies, then return the top
+/// `top_k` survivors. This ordering prevents leaking forbidden documents
+/// through similarity ranking.
+///
+/// Implements: SR_INT_15
+pub struct VectorSemanticSearchService {
+    index: Arc<dyn VectorIndex>,
+    checker: Arc<dyn CompartmentAccessChecker>,
+    audit: AuditLogger,
+}
+
+impl VectorSemanticSearchService {
+    pub fn new(
+        index: Arc<dyn VectorIndex>,
+        checker: Arc<dyn CompartmentAccessChecker>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self {
+            index,
+            checker,
+            audit,
+        }
+    }
+
+    /// Execute the over-fetch + filter + truncate flow and audit the search.
+    ///
+    /// Implements: SR_INT_15
+    pub async fn search(
+        &self,
+        input: SemanticSearchInput,
+    ) -> Result<SemanticSearchResult, PrismError> {
+        let over_fetch = input.top_k.saturating_mul(2).max(input.top_k);
+        let raw = self.index.search(&input.query_vector, over_fetch).await?;
+        let raw_count = raw.len();
+
+        let mut survivors: Vec<SearchResult> = Vec::new();
+        let mut dropped: usize = 0;
+
+        for (source_id, similarity) in raw {
+            let allowed = self
+                .checker
+                .is_allowed(input.principal_id, &input.principal_roles, &source_id)
+                .await?;
+            if allowed {
+                survivors.push(SearchResult {
+                    source_id,
+                    similarity,
+                    compartment_allowed: true,
+                });
+            } else {
+                dropped += 1;
+            }
+        }
+
+        survivors.truncate(input.top_k);
+        let filtered_count = raw_count.saturating_sub(dropped);
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "intelligence.semantic_search_executed".into(),
+                actor_id: *input.principal_id.as_uuid(),
+                actor_type: ActorType::Human,
+                target_id: None,
+                target_type: Some("SemanticSearch".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "top_k": input.top_k,
+                    "raw_count": raw_count,
+                    "returned_count": survivors.len(),
+                    "dropped_for_compartment_count": dropped,
+                }),
+            })
+            .await?;
+
+        Ok(SemanticSearchResult {
+            results: survivors,
+            filtered_count,
+            dropped_for_compartment_count: dropped,
+        })
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1530,5 +2139,647 @@ mod tests {
         assert_eq!(result.queue_id, uuid::Uuid::nil());
         assert_eq!(repo.count(), 0);
         assert_eq!(alerts.count(), 0);
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_09 -- CoverageCalculator
+    // ------------------------------------------------------------------
+
+    struct FixedCoverageSource {
+        counts: CoverageCounts,
+    }
+
+    #[async_trait]
+    impl CoverageSource for FixedCoverageSource {
+        async fn get_counts(&self, _tenant_id: TenantId) -> Result<CoverageCounts, PrismError> {
+            Ok(self.counts)
+        }
+    }
+
+    #[tokio::test]
+    async fn int09_full_coverage_has_no_limitations() {
+        let source = Arc::new(FixedCoverageSource {
+            counts: CoverageCounts {
+                systems_known: 10,
+                systems_total: 10,
+                processes_known: 5,
+                processes_total: 5,
+                data_collections_known: 20,
+                data_collections_total: 20,
+                departments_known: 3,
+                departments_total: 3,
+                relationships_known: 40,
+                relationships_total: 40,
+            },
+        });
+        let (audit_repo, audit) = make_audit();
+        let svc = CoverageCalculator::new(source, audit);
+
+        let result = svc
+            .compute(CoverageRequest {
+                tenant_id: tenant(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.dimensions.len(), 5);
+        for (_dim, pct) in &result.dimensions {
+            assert!((pct - 1.0).abs() < f64::EPSILON);
+        }
+        assert!(result.limitations.is_empty());
+        assert!(audit_repo
+            .event_types()
+            .contains(&"intelligence.coverage_computed".to_string()));
+    }
+
+    #[tokio::test]
+    async fn int09_partial_coverage_records_limitations() {
+        let source = Arc::new(FixedCoverageSource {
+            counts: CoverageCounts {
+                systems_known: 10,
+                systems_total: 10,
+                processes_known: 2,
+                processes_total: 10,
+                data_collections_known: 4,
+                data_collections_total: 10,
+                departments_known: 3,
+                departments_total: 3,
+                relationships_known: 1,
+                relationships_total: 10,
+            },
+        });
+        let (_audit_repo, audit) = make_audit();
+        let svc = CoverageCalculator::new(source, audit);
+
+        let result = svc
+            .compute(CoverageRequest {
+                tenant_id: tenant(),
+            })
+            .await
+            .unwrap();
+
+        // Process (20%), Data (40%), Relationship (10%) are below 50%.
+        assert_eq!(result.limitations.len(), 3);
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_10 -- ProcessEmergenceDetector
+    // ------------------------------------------------------------------
+
+    struct StubMatcher {
+        candidates: Vec<ProcessCandidate>,
+    }
+
+    #[async_trait]
+    impl ProcessPatternMatcher for StubMatcher {
+        async fn find_process_candidates(
+            &self,
+            _tenant_id: TenantId,
+        ) -> Result<Vec<ProcessCandidate>, PrismError> {
+            Ok(self.candidates.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn int10_creates_candidate_nodes() {
+        let t = tenant();
+        let matcher = Arc::new(StubMatcher {
+            candidates: vec![
+                ProcessCandidate {
+                    id: uuid::Uuid::new_v4(),
+                    tenant_id: t,
+                    suggested_name: "Onboarding".into(),
+                    component_ids: vec![uuid::Uuid::new_v4(), uuid::Uuid::new_v4()],
+                    confidence: 0.8,
+                    created_at: Utc::now(),
+                    status: "draft".into(),
+                },
+                ProcessCandidate {
+                    id: uuid::Uuid::new_v4(),
+                    tenant_id: t,
+                    suggested_name: "Offboarding".into(),
+                    component_ids: vec![uuid::Uuid::new_v4()],
+                    confidence: 0.75,
+                    created_at: Utc::now(),
+                    status: "draft".into(),
+                },
+            ],
+        });
+        let writer = Arc::new(MockGraphWriter::new());
+        let (audit_repo, audit) = make_audit();
+        let svc = ProcessEmergenceDetector::new(matcher, writer.clone(), audit);
+
+        let result = svc
+            .discover(ProcessDiscoveryInput { tenant_id: t })
+            .await
+            .unwrap();
+
+        assert_eq!(result.candidates.len(), 2);
+        assert!(result
+            .candidates
+            .iter()
+            .all(|c| c.status == "pending_confirmation"));
+        assert_eq!(writer.count_of("ProcessCandidate"), 2);
+        assert_eq!(
+            audit_repo
+                .event_types()
+                .iter()
+                .filter(|t| *t == "intelligence.process_discovered")
+                .count(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn int10_handles_empty_results() {
+        let matcher = Arc::new(StubMatcher { candidates: vec![] });
+        let writer = Arc::new(MockGraphWriter::new());
+        let (_audit_repo, audit) = make_audit();
+        let svc = ProcessEmergenceDetector::new(matcher, writer.clone(), audit);
+
+        let result = svc
+            .discover(ProcessDiscoveryInput {
+                tenant_id: tenant(),
+            })
+            .await
+            .unwrap();
+
+        assert!(result.candidates.is_empty());
+        assert_eq!(writer.total(), 0);
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_11 -- DataGroupMembershipService
+    // ------------------------------------------------------------------
+
+    struct MockGroupRepo {
+        members: Mutex<Vec<DataGroupMembership>>,
+    }
+
+    impl MockGroupRepo {
+        fn new() -> Self {
+            Self {
+                members: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn count(&self) -> usize {
+            self.members.lock().unwrap().len()
+        }
+    }
+
+    #[async_trait]
+    impl DataGroupRepository for MockGroupRepo {
+        async fn add_member(&self, membership: &DataGroupMembership) -> Result<bool, PrismError> {
+            let mut members = self.members.lock().unwrap();
+            if members.iter().any(|m| {
+                m.group_id == membership.group_id && m.collection_id == membership.collection_id
+            }) {
+                return Ok(false);
+            }
+            members.push(membership.clone());
+            Ok(true)
+        }
+
+        async fn get_members(
+            &self,
+            tenant_id: TenantId,
+            group_id: uuid::Uuid,
+        ) -> Result<Vec<DataGroupMembership>, PrismError> {
+            Ok(self
+                .members
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|m| m.tenant_id == tenant_id && m.group_id == group_id)
+                .cloned()
+                .collect())
+        }
+
+        async fn remove_member(
+            &self,
+            tenant_id: TenantId,
+            group_id: uuid::Uuid,
+            collection_id: uuid::Uuid,
+        ) -> Result<(), PrismError> {
+            self.members.lock().unwrap().retain(|m| {
+                !(m.tenant_id == tenant_id
+                    && m.group_id == group_id
+                    && m.collection_id == collection_id)
+            });
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn int11_adds_members_and_creates_edges() {
+        let repo = Arc::new(MockGroupRepo::new());
+        let writer = Arc::new(MockGraphWriter::new());
+        let svc = DataGroupMembershipService::new(repo.clone(), writer.clone());
+
+        let group_id = uuid::Uuid::new_v4();
+        let collections = vec![
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+            uuid::Uuid::new_v4(),
+        ];
+
+        let result = svc
+            .add_to_group(DataGroupingInput {
+                tenant_id: tenant(),
+                group_id,
+                collection_ids: collections.clone(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.members_added, 3);
+        assert_eq!(repo.count(), 3);
+        assert_eq!(writer.count_of("MemberOfEdge"), 3);
+    }
+
+    #[tokio::test]
+    async fn int11_skips_duplicate_memberships() {
+        let repo = Arc::new(MockGroupRepo::new());
+        let writer = Arc::new(MockGraphWriter::new());
+        let svc = DataGroupMembershipService::new(repo.clone(), writer.clone());
+
+        let t = tenant();
+        let group_id = uuid::Uuid::new_v4();
+        let collection_id = uuid::Uuid::new_v4();
+
+        let first = svc
+            .add_to_group(DataGroupingInput {
+                tenant_id: t,
+                group_id,
+                collection_ids: vec![collection_id],
+            })
+            .await
+            .unwrap();
+        assert_eq!(first.members_added, 1);
+
+        let second = svc
+            .add_to_group(DataGroupingInput {
+                tenant_id: t,
+                group_id,
+                collection_ids: vec![collection_id],
+            })
+            .await
+            .unwrap();
+        assert_eq!(second.members_added, 0);
+        assert_eq!(repo.count(), 1);
+        assert_eq!(writer.count_of("MemberOfEdge"), 1);
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_12 -- TagWeightService
+    // ------------------------------------------------------------------
+
+    struct MockWeightConfig {
+        overrides: Vec<(TagCategory, f64)>,
+    }
+
+    #[async_trait]
+    impl TagWeightConfigRepository for MockWeightConfig {
+        async fn get_overrides(
+            &self,
+            _tenant_id: TenantId,
+        ) -> Result<Vec<(TagCategory, f64)>, PrismError> {
+            Ok(self.overrides.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn int12_returns_default_weights_when_no_overrides() {
+        let repo = Arc::new(MockWeightConfig { overrides: vec![] });
+        let svc = TagWeightService::new(repo);
+
+        let result = svc
+            .compute_weights(TagWeightInput {
+                tenant_id: tenant(),
+                tag_categories: vec![
+                    TagCategory::Security,
+                    TagCategory::Business,
+                    TagCategory::Technical,
+                ],
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.weights[0], (TagCategory::Security, 1.0));
+        assert_eq!(result.weights[1], (TagCategory::Business, 0.7));
+        assert_eq!(result.weights[2], (TagCategory::Technical, 0.5));
+    }
+
+    #[tokio::test]
+    async fn int12_applies_tenant_override() {
+        let repo = Arc::new(MockWeightConfig {
+            overrides: vec![(TagCategory::Business, 0.9)],
+        });
+        let svc = TagWeightService::new(repo);
+
+        let result = svc
+            .compute_weights(TagWeightInput {
+                tenant_id: tenant(),
+                tag_categories: vec![TagCategory::Security, TagCategory::Business],
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.weights[0], (TagCategory::Security, 1.0));
+        assert_eq!(result.weights[1], (TagCategory::Business, 0.9));
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_13 -- CompletenessTagService
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn int13_applies_full_status() {
+        let writer = Arc::new(MockGraphWriter::new());
+        let svc = CompletenessTagService::new(writer.clone());
+
+        let result = svc
+            .apply(CompletenessTagInput {
+                tenant_id: tenant(),
+                collection_id: uuid::Uuid::new_v4(),
+                status: CompletenessStatus::Full,
+                missing_fields: vec![],
+            })
+            .await
+            .unwrap();
+
+        assert!(result.tagged);
+        assert_eq!(writer.count_of("DataCollectionCompleteness"), 1);
+    }
+
+    #[tokio::test]
+    async fn int13_applies_partial_status_with_missing_fields() {
+        let writer = Arc::new(MockGraphWriter::new());
+        let svc = CompletenessTagService::new(writer.clone());
+
+        let result = svc
+            .apply(CompletenessTagInput {
+                tenant_id: tenant(),
+                collection_id: uuid::Uuid::new_v4(),
+                status: CompletenessStatus::Partial,
+                missing_fields: vec!["ssn".into(), "dob".into()],
+            })
+            .await
+            .unwrap();
+
+        assert!(result.tagged);
+        let nodes = writer.nodes.lock().unwrap();
+        let (_, props) = nodes.last().unwrap();
+        assert_eq!(props["completeness_status"], "partial");
+        assert_eq!(props["missing_fields"][0], "ssn");
+        assert_eq!(props["missing_fields"][1], "dob");
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_14 -- RecommendationAccuracyService
+    // ------------------------------------------------------------------
+
+    struct MockAccuracyRepo {
+        store: Mutex<Vec<(TenantId, RecommendationAccuracy)>>,
+    }
+
+    impl MockAccuracyRepo {
+        fn new() -> Self {
+            Self {
+                store: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl RecommendationAccuracyRepository for MockAccuracyRepo {
+        async fn get(
+            &self,
+            tenant_id: TenantId,
+            collection_id: uuid::Uuid,
+        ) -> Result<Option<RecommendationAccuracy>, PrismError> {
+            Ok(self
+                .store
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(t, a)| *t == tenant_id && a.collection_id == collection_id)
+                .map(|(_, a)| a.clone()))
+        }
+
+        async fn upsert(
+            &self,
+            tenant_id: TenantId,
+            accuracy: &RecommendationAccuracy,
+        ) -> Result<(), PrismError> {
+            let mut store = self.store.lock().unwrap();
+            if let Some(existing) = store
+                .iter_mut()
+                .find(|(t, a)| *t == tenant_id && a.collection_id == accuracy.collection_id)
+            {
+                existing.1 = accuracy.clone();
+            } else {
+                store.push((tenant_id, accuracy.clone()));
+            }
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn int14_first_update_creates_record() {
+        let repo = Arc::new(MockAccuracyRepo::new());
+        let svc = RecommendationAccuracyService::new(repo.clone());
+
+        let result = svc
+            .update_accuracy(AccuracyUpdateInput {
+                tenant_id: tenant(),
+                collection_id: uuid::Uuid::new_v4(),
+                was_accurate: true,
+            })
+            .await
+            .unwrap();
+
+        assert!(result.updated);
+        assert!((result.new_rate - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn int14_increments_on_accurate() {
+        let repo = Arc::new(MockAccuracyRepo::new());
+        let svc = RecommendationAccuracyService::new(repo.clone());
+        let t = tenant();
+        let c = uuid::Uuid::new_v4();
+
+        // First: accurate.
+        svc.update_accuracy(AccuracyUpdateInput {
+            tenant_id: t,
+            collection_id: c,
+            was_accurate: true,
+        })
+        .await
+        .unwrap();
+        // Second: accurate.
+        let result = svc
+            .update_accuracy(AccuracyUpdateInput {
+                tenant_id: t,
+                collection_id: c,
+                was_accurate: true,
+            })
+            .await
+            .unwrap();
+
+        assert!((result.new_rate - 1.0).abs() < f64::EPSILON);
+        let stored = repo.get(t, c).await.unwrap().unwrap();
+        assert_eq!(stored.used_in_count, 2);
+        assert_eq!(stored.accurate_count, 2);
+    }
+
+    #[tokio::test]
+    async fn int14_increments_on_inaccurate() {
+        let repo = Arc::new(MockAccuracyRepo::new());
+        let svc = RecommendationAccuracyService::new(repo.clone());
+        let t = tenant();
+        let c = uuid::Uuid::new_v4();
+
+        svc.update_accuracy(AccuracyUpdateInput {
+            tenant_id: t,
+            collection_id: c,
+            was_accurate: true,
+        })
+        .await
+        .unwrap();
+        let result = svc
+            .update_accuracy(AccuracyUpdateInput {
+                tenant_id: t,
+                collection_id: c,
+                was_accurate: false,
+            })
+            .await
+            .unwrap();
+
+        assert!((result.new_rate - 0.5).abs() < f64::EPSILON);
+        let stored = repo.get(t, c).await.unwrap().unwrap();
+        assert_eq!(stored.used_in_count, 2);
+        assert_eq!(stored.accurate_count, 1);
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_15 -- VectorSemanticSearchService
+    // ------------------------------------------------------------------
+
+    struct StubVectorIndex {
+        hits: Vec<(String, f64)>,
+    }
+
+    #[async_trait]
+    impl VectorIndex for StubVectorIndex {
+        async fn search(
+            &self,
+            _query: &[f32],
+            top_k: usize,
+        ) -> Result<Vec<(String, f64)>, PrismError> {
+            let mut out = self.hits.clone();
+            out.truncate(top_k);
+            Ok(out)
+        }
+    }
+
+    struct AllowList {
+        allowed: Vec<String>,
+    }
+
+    #[async_trait]
+    impl CompartmentAccessChecker for AllowList {
+        async fn is_allowed(
+            &self,
+            _principal_id: UserId,
+            _principal_roles: &[RoleId],
+            resource_id: &str,
+        ) -> Result<bool, PrismError> {
+            Ok(self.allowed.iter().any(|a| a == resource_id))
+        }
+    }
+
+    fn search_input(top_k: usize) -> SemanticSearchInput {
+        SemanticSearchInput {
+            tenant_id: tenant(),
+            principal_id: UserId::from(uuid::Uuid::new_v4()),
+            principal_roles: vec![],
+            query_vector: vec![0.1, 0.2, 0.3],
+            top_k,
+        }
+    }
+
+    #[tokio::test]
+    async fn int15_returns_allowed_results() {
+        let index = Arc::new(StubVectorIndex {
+            hits: vec![
+                ("doc-a".into(), 0.95),
+                ("doc-b".into(), 0.90),
+                ("doc-c".into(), 0.85),
+                ("doc-d".into(), 0.80),
+            ],
+        });
+        let checker = Arc::new(AllowList {
+            allowed: vec![
+                "doc-a".into(),
+                "doc-b".into(),
+                "doc-c".into(),
+                "doc-d".into(),
+            ],
+        });
+        let (audit_repo, audit) = make_audit();
+        let svc = VectorSemanticSearchService::new(index, checker, audit);
+
+        let result = svc.search(search_input(2)).await.unwrap();
+
+        assert_eq!(result.results.len(), 2);
+        assert_eq!(result.results[0].source_id, "doc-a");
+        assert_eq!(result.dropped_for_compartment_count, 0);
+        assert!(audit_repo
+            .event_types()
+            .contains(&"intelligence.semantic_search_executed".to_string()));
+    }
+
+    #[tokio::test]
+    async fn int15_filters_out_denied_results() {
+        let index = Arc::new(StubVectorIndex {
+            hits: vec![
+                ("secret-1".into(), 0.99), // denied
+                ("doc-a".into(), 0.90),
+                ("secret-2".into(), 0.85), // denied
+                ("doc-b".into(), 0.80),
+            ],
+        });
+        let checker = Arc::new(AllowList {
+            allowed: vec!["doc-a".into(), "doc-b".into()],
+        });
+        let (_audit_repo, audit) = make_audit();
+        let svc = VectorSemanticSearchService::new(index, checker, audit);
+
+        let result = svc.search(search_input(2)).await.unwrap();
+
+        assert_eq!(result.results.len(), 2);
+        assert!(result.results.iter().all(|r| r.compartment_allowed));
+        assert_eq!(result.dropped_for_compartment_count, 2);
+        assert!(result
+            .results
+            .iter()
+            .all(|r| !r.source_id.starts_with("secret")));
+    }
+
+    #[tokio::test]
+    async fn int15_handles_empty_index() {
+        let index = Arc::new(StubVectorIndex { hits: vec![] });
+        let checker = Arc::new(AllowList { allowed: vec![] });
+        let (_audit_repo, audit) = make_audit();
+        let svc = VectorSemanticSearchService::new(index, checker, audit);
+
+        let result = svc.search(search_input(5)).await.unwrap();
+
+        assert!(result.results.is_empty());
+        assert_eq!(result.filtered_count, 0);
+        assert_eq!(result.dropped_for_compartment_count, 0);
     }
 }

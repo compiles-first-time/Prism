@@ -141,6 +141,13 @@
 | SR_INT_06 | Stage 5 quality assessment | **Done** | prism-llm | intelligence.rs | 2 unit | Day 23 |
 | SR_INT_07 | TrendAnalysis | **Done** | prism-llm | intelligence.rs | 3 unit | Day 23 |
 | SR_INT_08 | Human review queue | **Done** | prism-llm | intelligence.rs | 2 unit | Day 23 |
+| SR_INT_09 | Coverage calculator | **Done** | prism-llm | intelligence.rs | 2 unit | Day 24 |
+| SR_INT_10 | Process emergence | **Done** | prism-llm | intelligence.rs | 2 unit | Day 24 |
+| SR_INT_11 | DataGroup membership | **Done** | prism-llm | intelligence.rs | 2 unit | Day 24 |
+| SR_INT_12 | Tag weights | **Done** | prism-llm | intelligence.rs | 2 unit | Day 24 |
+| SR_INT_13 | Completeness tags | **Done** | prism-llm | intelligence.rs | 2 unit | Day 24 |
+| SR_INT_14 | Recommendation accuracy | **Done** | prism-llm | intelligence.rs | 3 unit | Day 24 |
+| SR_INT_15 | Vector semantic search | **Done** | prism-llm | intelligence.rs | 3 unit | Day 24 |
 | **REUSABLE** | MerkleChainHasher | **Done** | prism-audit | merkle_chain.rs | 7 unit | Day 2 |
 | **REUSABLE** | AuditLogger | **Done** | prism-audit | event_store.rs | 7 unit | Day 2 |
 | **REUSABLE** | TenantFilter | **Done** | prism-core | tenant_filter.rs | 3 unit | Day 4 |

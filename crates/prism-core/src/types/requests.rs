@@ -3,6 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use super::entities::{ProcessCandidate, SearchResult};
 use super::enums::*;
 use super::identifiers::*;
 
@@ -2158,4 +2159,122 @@ pub struct ReviewQueueInput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewQueueResult {
     pub queue_id: uuid::Uuid,
+}
+
+// ============================================================================
+// Intelligence Layer request / result types (SR_INT_09 .. SR_INT_15)
+// ============================================================================
+
+/// Input for coverage computation across the five dimensions.
+/// Implements: SR_INT_09
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoverageRequest {
+    pub tenant_id: TenantId,
+}
+
+/// Per-dimension coverage percentages and any discovered limitations.
+/// Implements: SR_INT_09
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoverageResult {
+    pub dimensions: Vec<(CoverageDimension, f64)>,
+    pub limitations: Vec<String>,
+}
+
+/// Input for the process-emergence detector.
+/// Implements: SR_INT_10
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessDiscoveryInput {
+    pub tenant_id: TenantId,
+}
+
+/// Result of process discovery: candidates queued for human confirmation.
+/// Implements: SR_INT_10
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessDiscoveryResult {
+    pub candidates: Vec<ProcessCandidate>,
+}
+
+/// Input for adding DataCollections to a DataGroup via `MEMBER_OF` edges.
+/// Implements: SR_INT_11
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataGroupingInput {
+    pub tenant_id: TenantId,
+    pub group_id: uuid::Uuid,
+    pub collection_ids: Vec<uuid::Uuid>,
+}
+
+/// Result of DataGroup membership updates.
+/// Implements: SR_INT_11
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataGroupingResult {
+    pub members_added: u32,
+}
+
+/// Input for tag-weight evaluation (D-49).
+/// Implements: SR_INT_12
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagWeightInput {
+    pub tenant_id: TenantId,
+    pub tag_categories: Vec<TagCategory>,
+}
+
+/// Effective tag weights for the operation, after tenant overrides.
+/// Implements: SR_INT_12
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagWeightResult {
+    pub weights: Vec<(TagCategory, f64)>,
+}
+
+/// Input for applying a completeness tag to a DataCollection (D-50).
+/// Implements: SR_INT_13
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompletenessTagInput {
+    pub tenant_id: TenantId,
+    pub collection_id: uuid::Uuid,
+    pub status: CompletenessStatus,
+    pub missing_fields: Vec<String>,
+}
+
+/// Result of applying a completeness tag.
+/// Implements: SR_INT_13
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompletenessTagResult {
+    pub tagged: bool,
+}
+
+/// Input for updating the recommendation accuracy counters (D-56).
+/// Implements: SR_INT_14
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccuracyUpdateInput {
+    pub tenant_id: TenantId,
+    pub collection_id: uuid::Uuid,
+    pub was_accurate: bool,
+}
+
+/// Result of an accuracy update, including the newly computed rate.
+/// Implements: SR_INT_14
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccuracyUpdateResult {
+    pub updated: bool,
+    pub new_rate: f64,
+}
+
+/// Input for a vector semantic-search query with compartment post-filter.
+/// Implements: SR_INT_15
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticSearchInput {
+    pub tenant_id: TenantId,
+    pub principal_id: UserId,
+    pub principal_roles: Vec<RoleId>,
+    pub query_vector: Vec<f32>,
+    pub top_k: usize,
+}
+
+/// Result of a semantic-search query with per-result compartment trace.
+/// Implements: SR_INT_15
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticSearchResult {
+    pub results: Vec<SearchResult>,
+    pub filtered_count: usize,
+    pub dropped_for_compartment_count: usize,
 }
