@@ -4,6 +4,30 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-14 -- Day 22: Spec 03 Connection Layer COMPLETE — classification gate + operations
+
+### Implemented
+- SR_CONN_25-31: Full classification pipeline (normalized record builder, Stage 1 technical, Stage 2 security with three-tier NER, classification gate orchestrator, Stage 3 semantic via LLM, Stage 4 relationship inference, Stage 5 quality assessment)
+- SR_CONN_32-33: Quarantine with configurable expiry actions (delete/archive/permanent/retry)
+- SR_CONN_34: Per-scope pull locks with TTL and stale recovery
+- SR_CONN_35: Schema change detection via snapshot comparison
+- SR_CONN_36: Rate budget check (vendor + tenant quota)
+- SR_CONN_37: Connection KPI tracking with degradation threshold evaluation
+- SR_CONN_38-39: Classification override store and application pipeline
+- SR_CONN_40-41: Cloud LLM provider connections with deprecation alerting
+- SR_CONN_42: Paywall API governance decision tree
+- SR_CONN_43: Bulk import audit logging
+- SR_CONN_44: Connection health dashboard query
+
+### Test Summary
+- 29 new tests, 382 total, all passing. All quality gates green.
+
+### MILESTONE: SPEC 03 CONNECTION LAYER COMPLETE
+- 44 SRs implemented (SR_CONN_01-44, all 5 sections)
+- 3 completed specs: 01 Governance, 02 Data Model, 03 Connection
+
+---
+
 ## Session 2026-04-14 -- Day 21: Spec 03 — connection adapters + log stream ingestion
 
 ### Implemented

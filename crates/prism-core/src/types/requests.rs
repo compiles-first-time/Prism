@@ -1841,3 +1841,177 @@ pub struct LogMetricRow {
     pub lag_seconds: u64,
     pub redaction_count: u64,
 }
+
+// -- Classification gate requests (SR_CONN_25 .. SR_CONN_31) -----------------
+
+/// Result of Stage 1 technical classification.
+/// Implements: SR_CONN_26
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TechnicalClassificationResult {
+    pub types: Vec<String>,
+    pub formats: Vec<String>,
+    pub schema_version: String,
+}
+
+/// A named-entity recognition match from an NER ensemble.
+/// Implements: SR_CONN_28
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NerMatch {
+    pub entity: String,
+    pub classification: String,
+    pub confidence: f64,
+}
+
+/// Result of Stage 2 security classification.
+/// Implements: SR_CONN_28
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SecurityClassificationResult {
+    pub classifications: Vec<String>,
+    pub confidence_per_field: Vec<(String, f64)>,
+}
+
+/// Result of the full classification gate evaluation.
+/// Implements: SR_CONN_27
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClassificationGateResult {
+    pub gate: ClassificationGateDecision,
+    pub technical_result: TechnicalClassificationResult,
+    pub security_result: SecurityClassificationResult,
+}
+
+/// Result of Stage 3 semantic classification.
+/// Implements: SR_CONN_29
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticClassificationResult {
+    pub fields: Vec<SemanticFieldTag>,
+}
+
+/// A semantic tag applied to a single data field.
+/// Implements: SR_CONN_29
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticFieldTag {
+    pub field_name: String,
+    pub semantic_type: String,
+    pub business_domain: String,
+}
+
+/// A candidate edge proposed by relationship inference.
+/// Implements: SR_CONN_30
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CandidateEdge {
+    pub from_field: String,
+    pub to_field: String,
+    pub relationship: String,
+    pub confidence: f64,
+    pub confirmed_by: String,
+}
+
+/// Data quality report from Stage 5 quality assessment.
+/// Implements: SR_CONN_31
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataQualityReport {
+    pub collection_id: uuid::Uuid,
+    pub overall_score: f64,
+    pub completeness: f64,
+    pub consistency: f64,
+    pub freshness: f64,
+}
+
+// -- Connection operations requests (SR_CONN_32 .. SR_CONN_44) ----------------
+
+/// A quarantine record for data that failed classification.
+/// Implements: SR_CONN_32
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuarantineRecord {
+    pub id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    pub execution_record_id: uuid::Uuid,
+    pub reason: String,
+    pub policy: QuarantinePolicy,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// A pull lock preventing concurrent pulls on the same scope.
+/// Implements: SR_CONN_34
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PullLock {
+    pub connection_id: uuid::Uuid,
+    pub scope: String,
+    pub acquired_at: DateTime<Utc>,
+    pub ttl_seconds: u64,
+}
+
+/// A snapshot of connection schema fields at a point in time.
+/// Implements: SR_CONN_35
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaSnapshot {
+    pub connection_id: uuid::Uuid,
+    pub fields: Vec<String>,
+    pub captured_at: DateTime<Utc>,
+}
+
+/// An event emitted when schema changes are detected.
+/// Implements: SR_CONN_35
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaChangeEvent {
+    pub connection_id: uuid::Uuid,
+    pub added_fields: Vec<String>,
+    pub removed_fields: Vec<String>,
+    pub severity: Severity,
+}
+
+/// Input for a rate budget check.
+/// Implements: SR_CONN_36
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateBudgetCheck {
+    pub system_id: String,
+    pub tenant_id: TenantId,
+    pub expected_call_count: u64,
+}
+
+/// Result of a rate budget check.
+/// Implements: SR_CONN_36
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateBudgetResult {
+    pub decision: PullPreflightDecision,
+    pub defer_reason: Option<String>,
+}
+
+/// KPI snapshot for a single connection.
+/// Implements: SR_CONN_37
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionKpiSnapshot {
+    pub connection_id: uuid::Uuid,
+    pub uptime_pct: f64,
+    pub avg_latency_ms: u64,
+    pub error_rate_pct: f64,
+    pub last_successful_pull: Option<DateTime<Utc>>,
+}
+
+/// A classification override for a specific field.
+/// Implements: SR_CONN_38
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClassificationOverride {
+    pub system_id: String,
+    pub field_name: String,
+    pub classification: String,
+}
+
+/// Summary of a connection's KPIs for the health dashboard.
+/// Implements: SR_CONN_44
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionKpiSummary {
+    pub connection_id: uuid::Uuid,
+    pub system_id: String,
+    pub status: String,
+    pub uptime_pct: f64,
+    pub avg_latency_ms: u64,
+    pub error_rate_pct: f64,
+}
+
+/// Result of a health dashboard query.
+/// Implements: SR_CONN_44
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthDashboardResult {
+    pub connections: Vec<ConnectionKpiSummary>,
+}

@@ -485,6 +485,47 @@ pub enum IngestionMode {
     OnDemand,
 }
 
+/// Decision from the classification gate.
+/// Determines whether ingested data passes into the pipeline or is blocked.
+/// Implements: SR_CONN_27
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClassificationGateDecision {
+    /// Data is allowed through the classification gate.
+    Allow,
+    /// Data is blocked by the classification gate.
+    Block,
+}
+
+/// Policy governing quarantined data expiry.
+/// Determines what happens when a quarantine record expires.
+/// Implements: SR_CONN_32
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QuarantinePolicy {
+    /// Permanently delete the quarantined data.
+    Delete,
+    /// Archive the data in an encrypted vault.
+    ArchiveEncrypted,
+    /// Keep the data quarantined indefinitely.
+    PermanentQuarantine,
+    /// Retry classification with updated rules.
+    RetryClassification,
+}
+
+/// Decision from paywall API governance evaluation.
+/// Implements: SR_CONN_42
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaywallDecision {
+    /// API access is approved.
+    Approved,
+    /// API access is rejected due to missing authorization or budget.
+    Rejected,
+    /// Data must be obtained via manual export instead of API.
+    ManualExportRequired,
+}
+
 /// Source layer that produced a governance event (SR_GOV_47).
 /// Maps to the architectural layers in the PRISM spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -113,6 +113,26 @@
 | SR_CONN_22 | Multi-system correlation | **Done** | prism-adapters | log_ingestion.rs | 2 unit | Day 21 |
 | SR_CONN_23 | Ingestion modes | **Done** | prism-adapters | log_ingestion.rs | 2 unit | Day 21 |
 | SR_CONN_24 | Log ingestion metrics | **Done** | prism-adapters | log_ingestion.rs | 1 unit | Day 21 |
+| SR_CONN_25 | Normalized record builder | **Done** | prism-adapters | classification_gate.rs | 1 unit | Day 22 |
+| SR_CONN_26 | Stage 1 technical classification | **Done** | prism-adapters | classification_gate.rs | 1 unit | Day 22 |
+| SR_CONN_27 | Classification gate orchestrator | **Done** | prism-adapters | classification_gate.rs | 2 unit | Day 22 |
+| SR_CONN_28 | Stage 2 security classification | **Done** | prism-adapters | classification_gate.rs | 2 unit | Day 22 |
+| SR_CONN_29 | Stage 3 semantic classification | **Done** | prism-adapters | classification_gate.rs | 1 unit | Day 22 |
+| SR_CONN_30 | Stage 4 relationship inference | **Done** | prism-adapters | classification_gate.rs | 1 unit | Day 22 |
+| SR_CONN_31 | Stage 5 quality assessment | **Done** | prism-adapters | classification_gate.rs | 1 unit | Day 22 |
+| SR_CONN_32 | Quarantine | **Done** | prism-adapters | connection_operations.rs | 2 unit | Day 22 |
+| SR_CONN_33 | Quarantine expiry | **Done** | prism-adapters | connection_operations.rs | 2 unit | Day 22 |
+| SR_CONN_34 | Pull lock | **Done** | prism-adapters | connection_operations.rs | 2 unit | Day 22 |
+| SR_CONN_35 | Schema change detection | **Done** | prism-adapters | connection_operations.rs | 2 unit | Day 22 |
+| SR_CONN_36 | Rate budget check | **Done** | prism-adapters | connection_operations.rs | 2 unit | Day 22 |
+| SR_CONN_37 | Connection KPIs | **Done** | prism-adapters | connection_operations.rs | 2 unit | Day 22 |
+| SR_CONN_38 | Classification override store | **Done** | prism-adapters | connection_operations.rs | 1 unit | Day 22 |
+| SR_CONN_39 | Apply overrides | **Done** | prism-adapters | connection_operations.rs | 1 unit | Day 22 |
+| SR_CONN_40 | Cloud LLM provider | **Done** | prism-adapters | connection_operations.rs | 1 unit | Day 22 |
+| SR_CONN_41 | Deprecation alerting | **Done** | prism-adapters | connection_operations.rs | 1 unit | Day 22 |
+| SR_CONN_42 | Paywall governance | **Done** | prism-adapters | connection_operations.rs | 2 unit | Day 22 |
+| SR_CONN_43 | Bulk import logging | **Done** | prism-adapters | connection_operations.rs | 1 unit | Day 22 |
+| SR_CONN_44 | Health dashboard | **Done** | prism-adapters | connection_operations.rs | 1 unit | Day 22 |
 | **REUSABLE** | MerkleChainHasher | **Done** | prism-audit | merkle_chain.rs | 7 unit | Day 2 |
 | **REUSABLE** | AuditLogger | **Done** | prism-audit | event_store.rs | 7 unit | Day 2 |
 | **REUSABLE** | TenantFilter | **Done** | prism-core | tenant_filter.rs | 3 unit | Day 4 |
