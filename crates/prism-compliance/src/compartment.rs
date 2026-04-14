@@ -5,34 +5,80 @@
 //! override the default "visibility flows up" model -- even executives
 //! cannot see data without explicit membership.
 //!
-//! Implements: SR_GOV_31 (create), SR_GOV_32 (add member), SR_GOV_33 (access check)
+//! Implements: SR_GOV_31 (create), SR_GOV_32 (add member), SR_GOV_33 (access check),
+//!             SR_GOV_34 (revoke member)
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use chrono::Utc;
-use tracing::info;
+use tracing::{info, warn};
 
 use prism_audit::event_store::AuditLogger;
 use prism_core::error::PrismError;
 use prism_core::repository::CompartmentRepository;
 use prism_core::types::*;
 
+// ---------------------------------------------------------------------------
+// Trait: SessionTerminator
+// ---------------------------------------------------------------------------
+
+/// Terminates active sessions that are exposing data from a compartment.
+///
+/// When membership is revoked, any sessions the revoked principal has open
+/// that touch compartment-bound data must be terminated immediately to
+/// prevent lingering access.
+///
+/// Implements: SR_GOV_34 (session termination on revocation)
+#[async_trait]
+pub trait SessionTerminator: Send + Sync {
+    /// Terminate all sessions for the given principal (person or role members)
+    /// that are currently accessing data from the specified compartment.
+    /// Returns the number of sessions terminated.
+    async fn terminate_compartment_sessions(
+        &self,
+        tenant_id: TenantId,
+        compartment_id: CompartmentId,
+        person_id: Option<UserId>,
+        role_id: Option<RoleId>,
+    ) -> Result<u64, PrismError>;
+}
+
 /// Service for managing visibility compartments.
 ///
 /// Composes:
 /// - `CompartmentRepository` -- persistence for compartments and membership
 /// - `AuditLogger` -- audit trail for all compartment operations
+/// - `SessionTerminator` -- terminates sessions on revocation (SR_GOV_34)
 ///
-/// Implements: SR_GOV_31, SR_GOV_32, SR_GOV_33
+/// Implements: SR_GOV_31, SR_GOV_32, SR_GOV_33, SR_GOV_34
 pub struct CompartmentService {
     repo: Arc<dyn CompartmentRepository>,
     audit: AuditLogger,
+    session_terminator: Option<Arc<dyn SessionTerminator>>,
 }
 
 impl CompartmentService {
     /// Create a new compartment service.
     pub fn new(repo: Arc<dyn CompartmentRepository>, audit: AuditLogger) -> Self {
-        Self { repo, audit }
+        Self {
+            repo,
+            audit,
+            session_terminator: None,
+        }
+    }
+
+    /// Create a new compartment service with session termination support.
+    pub fn with_session_terminator(
+        repo: Arc<dyn CompartmentRepository>,
+        audit: AuditLogger,
+        session_terminator: Arc<dyn SessionTerminator>,
+    ) -> Self {
+        Self {
+            repo,
+            audit,
+            session_terminator: Some(session_terminator),
+        }
     }
 
     /// Create a visibility compartment with initial members.
@@ -303,6 +349,124 @@ impl CompartmentService {
             reason,
         })
     }
+
+    /// Revoke compartment membership for a person or role.
+    ///
+    /// Validates:
+    /// - Exactly one of person_id or role_id is provided
+    /// - Compartment exists and belongs to the same tenant
+    ///
+    /// On successful revocation, terminates any active sessions that are
+    /// exposing data from the compartment for the revoked principal.
+    ///
+    /// Implements: SR_GOV_34
+    pub async fn revoke_member(
+        &self,
+        request: &CompartmentMembershipRemoveRequest,
+    ) -> Result<CompartmentMembershipRemoveResult, PrismError> {
+        // Exactly one of person_id or role_id
+        match (&request.person_id, &request.role_id) {
+            (None, None) => {
+                return Err(PrismError::Validation {
+                    reason: "exactly one of person_id or role_id must be provided".into(),
+                });
+            }
+            (Some(_), Some(_)) => {
+                return Err(PrismError::Validation {
+                    reason: "provide either person_id or role_id, not both".into(),
+                });
+            }
+            _ => {}
+        }
+
+        // Verify compartment exists and belongs to tenant
+        let _compartment = self
+            .repo
+            .get_by_id(request.tenant_id, request.compartment_id)
+            .await?
+            .ok_or_else(|| PrismError::NotFound {
+                entity_type: "Compartment",
+                id: *request.compartment_id.as_uuid(),
+            })?;
+
+        // Remove the membership
+        let removed = self
+            .repo
+            .remove_member(
+                request.tenant_id,
+                request.compartment_id,
+                request.person_id,
+                request.role_id,
+            )
+            .await?;
+
+        // Terminate active sessions exposing compartment-bound data
+        let sessions_terminated = if removed {
+            if let Some(ref terminator) = self.session_terminator {
+                terminator
+                    .terminate_compartment_sessions(
+                        request.tenant_id,
+                        request.compartment_id,
+                        request.person_id,
+                        request.role_id,
+                    )
+                    .await?
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+
+        // Audit trail
+        let target_desc = if let Some(pid) = request.person_id {
+            format!("person:{pid}")
+        } else {
+            format!("role:{}", request.role_id.unwrap())
+        };
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: request.tenant_id,
+                event_type: "compartment.member_removed".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::Human,
+                target_id: Some(*request.compartment_id.as_uuid()),
+                target_type: Some("Compartment".into()),
+                severity: Severity::High,
+                source_layer: SourceLayer::Compliance,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "member": target_desc,
+                    "removed": removed,
+                    "sessions_terminated": sessions_terminated,
+                }),
+            })
+            .await?;
+
+        if removed {
+            warn!(
+                compartment_id = %request.compartment_id,
+                tenant_id = %request.tenant_id,
+                member = %target_desc,
+                sessions_terminated,
+                "compartment membership revoked"
+            );
+        } else {
+            info!(
+                compartment_id = %request.compartment_id,
+                tenant_id = %request.tenant_id,
+                member = %target_desc,
+                "compartment membership revocation: member not found"
+            );
+        }
+
+        Ok(CompartmentMembershipRemoveResult {
+            compartment_id: request.compartment_id,
+            removed,
+            sessions_terminated,
+        })
+    }
 }
 
 // ===========================================================================
@@ -395,6 +559,24 @@ mod tests {
                         || m.role_id.map_or(false, |rid| role_ids.contains(&rid)))
             }))
         }
+
+        async fn remove_member(
+            &self,
+            tenant_id: TenantId,
+            compartment_id: CompartmentId,
+            person_id: Option<UserId>,
+            role_id: Option<RoleId>,
+        ) -> Result<bool, PrismError> {
+            let mut members = self.members.lock().unwrap();
+            let before = members.len();
+            members.retain(|m| {
+                !(m.compartment_id == compartment_id
+                    && m.tenant_id == tenant_id
+                    && m.person_id == person_id
+                    && m.role_id == role_id)
+            });
+            Ok(members.len() < before)
+        }
     }
 
     // -- Mock AuditEventRepository -------------------------------------------
@@ -450,6 +632,39 @@ mod tests {
         }
     }
 
+    // -- Mock SessionTerminator -------------------------------------------------
+
+    struct MockSessionTerminator {
+        terminated: Mutex<u64>,
+    }
+
+    impl MockSessionTerminator {
+        fn new() -> Self {
+            Self {
+                terminated: Mutex::new(0),
+            }
+        }
+
+        fn terminated_count(&self) -> u64 {
+            *self.terminated.lock().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl SessionTerminator for MockSessionTerminator {
+        async fn terminate_compartment_sessions(
+            &self,
+            _tenant_id: TenantId,
+            _compartment_id: CompartmentId,
+            _person_id: Option<UserId>,
+            _role_id: Option<RoleId>,
+        ) -> Result<u64, PrismError> {
+            let mut count = self.terminated.lock().unwrap();
+            *count += 2; // simulate 2 sessions terminated per call
+            Ok(2)
+        }
+    }
+
     // -- Helpers --------------------------------------------------------------
 
     fn make_service() -> (CompartmentService, Arc<MockCompartmentRepo>) {
@@ -458,6 +673,20 @@ mod tests {
         let audit = AuditLogger::new(audit_repo);
         let svc = CompartmentService::new(repo.clone(), audit);
         (svc, repo)
+    }
+
+    fn make_service_with_terminator() -> (
+        CompartmentService,
+        Arc<MockCompartmentRepo>,
+        Arc<MockSessionTerminator>,
+    ) {
+        let repo = Arc::new(MockCompartmentRepo::new());
+        let audit_repo = Arc::new(MockAuditRepo::new());
+        let audit = AuditLogger::new(audit_repo);
+        let terminator = Arc::new(MockSessionTerminator::new());
+        let svc =
+            CompartmentService::with_session_terminator(repo.clone(), audit, terminator.clone());
+        (svc, repo, terminator)
     }
 
     fn make_create_request(tenant_id: TenantId) -> CompartmentCreateRequest {
@@ -708,5 +937,180 @@ mod tests {
 
         let result = svc.check_access(&check).await.unwrap();
         assert_eq!(result.decision, AccessDecision::Allow);
+    }
+
+    // -- SR_GOV_34 Revoke Member Tests ----------------------------------------
+
+    #[tokio::test]
+    async fn revoke_member_removes_person() {
+        let (svc, _repo, terminator) = make_service_with_terminator();
+        let tenant_id = TenantId::new();
+        let person_id = UserId::new();
+
+        // Create compartment with the person as a member
+        let mut req = make_create_request(tenant_id);
+        req.member_persons = vec![person_id];
+        let create_result = svc.create(&req).await.unwrap();
+
+        // Revoke the person
+        let revoke_req = CompartmentMembershipRemoveRequest {
+            tenant_id,
+            compartment_id: create_result.compartment_id,
+            person_id: Some(person_id),
+            role_id: None,
+        };
+
+        let result = svc.revoke_member(&revoke_req).await.unwrap();
+        assert!(result.removed);
+        assert_eq!(result.sessions_terminated, 2);
+        assert_eq!(terminator.terminated_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn revoke_member_removes_role() {
+        let (svc, _repo, _term) = make_service_with_terminator();
+        let tenant_id = TenantId::new();
+        let role_id = RoleId::new();
+
+        let mut req = make_create_request(tenant_id);
+        req.member_persons = vec![];
+        req.member_roles = vec![role_id];
+        let create_result = svc.create(&req).await.unwrap();
+
+        let revoke_req = CompartmentMembershipRemoveRequest {
+            tenant_id,
+            compartment_id: create_result.compartment_id,
+            person_id: None,
+            role_id: Some(role_id),
+        };
+
+        let result = svc.revoke_member(&revoke_req).await.unwrap();
+        assert!(result.removed);
+    }
+
+    #[tokio::test]
+    async fn revoke_member_returns_false_if_not_found() {
+        let (svc, _repo, _term) = make_service_with_terminator();
+        let tenant_id = TenantId::new();
+        let create_result = svc.create(&make_create_request(tenant_id)).await.unwrap();
+
+        // Try to remove a person who was never a member
+        let revoke_req = CompartmentMembershipRemoveRequest {
+            tenant_id,
+            compartment_id: create_result.compartment_id,
+            person_id: Some(UserId::new()),
+            role_id: None,
+        };
+
+        let result = svc.revoke_member(&revoke_req).await.unwrap();
+        assert!(!result.removed);
+        assert_eq!(result.sessions_terminated, 0);
+    }
+
+    #[tokio::test]
+    async fn revoke_member_rejects_both_person_and_role() {
+        let (svc, _, _) = make_service_with_terminator();
+        let tenant_id = TenantId::new();
+        let create_result = svc.create(&make_create_request(tenant_id)).await.unwrap();
+
+        let revoke_req = CompartmentMembershipRemoveRequest {
+            tenant_id,
+            compartment_id: create_result.compartment_id,
+            person_id: Some(UserId::new()),
+            role_id: Some(RoleId::new()),
+        };
+
+        let err = svc.revoke_member(&revoke_req).await.unwrap_err();
+        assert!(matches!(err, PrismError::Validation { .. }));
+    }
+
+    #[tokio::test]
+    async fn revoke_member_rejects_neither_person_nor_role() {
+        let (svc, _, _) = make_service_with_terminator();
+        let tenant_id = TenantId::new();
+        let create_result = svc.create(&make_create_request(tenant_id)).await.unwrap();
+
+        let revoke_req = CompartmentMembershipRemoveRequest {
+            tenant_id,
+            compartment_id: create_result.compartment_id,
+            person_id: None,
+            role_id: None,
+        };
+
+        let err = svc.revoke_member(&revoke_req).await.unwrap_err();
+        assert!(matches!(err, PrismError::Validation { .. }));
+    }
+
+    #[tokio::test]
+    async fn revoke_member_from_nonexistent_compartment_fails() {
+        let (svc, _, _) = make_service_with_terminator();
+
+        let revoke_req = CompartmentMembershipRemoveRequest {
+            tenant_id: TenantId::new(),
+            compartment_id: CompartmentId::new(),
+            person_id: Some(UserId::new()),
+            role_id: None,
+        };
+
+        let err = svc.revoke_member(&revoke_req).await.unwrap_err();
+        assert!(matches!(err, PrismError::NotFound { .. }));
+    }
+
+    #[tokio::test]
+    async fn revoke_member_denies_access_after_revocation() {
+        let (svc, _repo, _term) = make_service_with_terminator();
+        let tenant_id = TenantId::new();
+        let person_id = UserId::new();
+
+        // Create compartment with person as member
+        let mut req = make_create_request(tenant_id);
+        req.member_persons = vec![person_id];
+        let create_result = svc.create(&req).await.unwrap();
+
+        // Verify access is allowed before revocation
+        let check = CompartmentAccessCheckRequest {
+            tenant_id,
+            principal_id: person_id,
+            principal_roles: vec![],
+            resource_compartments: vec![create_result.compartment_id],
+        };
+        let before = svc.check_access(&check).await.unwrap();
+        assert_eq!(before.decision, AccessDecision::Allow);
+
+        // Revoke membership
+        let revoke_req = CompartmentMembershipRemoveRequest {
+            tenant_id,
+            compartment_id: create_result.compartment_id,
+            person_id: Some(person_id),
+            role_id: None,
+        };
+        svc.revoke_member(&revoke_req).await.unwrap();
+
+        // Verify access is denied after revocation
+        let after = svc.check_access(&check).await.unwrap();
+        assert_eq!(after.decision, AccessDecision::Deny);
+    }
+
+    #[tokio::test]
+    async fn revoke_member_without_terminator_skips_session_kill() {
+        // Use the basic service without a session terminator
+        let (svc, _repo) = make_service();
+        let tenant_id = TenantId::new();
+        let person_id = UserId::new();
+
+        let mut req = make_create_request(tenant_id);
+        req.member_persons = vec![person_id];
+        let create_result = svc.create(&req).await.unwrap();
+
+        let revoke_req = CompartmentMembershipRemoveRequest {
+            tenant_id,
+            compartment_id: create_result.compartment_id,
+            person_id: Some(person_id),
+            role_id: None,
+        };
+
+        let result = svc.revoke_member(&revoke_req).await.unwrap();
+        assert!(result.removed);
+        assert_eq!(result.sessions_terminated, 0); // no terminator = 0 sessions
     }
 }

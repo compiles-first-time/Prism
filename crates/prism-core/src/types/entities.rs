@@ -140,6 +140,43 @@ pub struct CompartmentMembership {
     pub added_at: DateTime<Utc>,
 }
 
+// -- Ruleset Version (SR_GOV_19) -------------------------------------------
+
+/// A versioned snapshot of a tenant's governance ruleset.
+/// Each publication creates a new version; only one is active at a time.
+/// Implements: SR_GOV_19
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RulesetVersion {
+    pub id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    /// The rules in this version.
+    pub rules: Vec<super::requests::GovernanceRule>,
+    /// Human-readable description of what changed.
+    pub change_description: String,
+    /// Whether this version is currently the active one.
+    pub is_active: bool,
+    /// Version number (monotonically increasing per tenant).
+    pub version_number: u64,
+    pub created_at: DateTime<Utc>,
+}
+
+// -- Alert History (SR_GOV_67) ---------------------------------------------
+
+/// A record of a dispatched alert for acknowledgement tracking.
+/// Implements: SR_GOV_67
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertHistoryEntry {
+    pub id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    pub severity: Severity,
+    pub source: String,
+    pub message: String,
+    pub channels: Vec<AlertChannel>,
+    pub recipients: Vec<String>,
+    pub acknowledged: bool,
+    pub created_at: DateTime<Utc>,
+}
+
 // -- Approval Chain ---------------------------------------------------------
 
 /// An approval chain instance computed by the LCA algorithm.

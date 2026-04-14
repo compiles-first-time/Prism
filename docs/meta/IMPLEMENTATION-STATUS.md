@@ -25,6 +25,10 @@
 | SR_GOV_31 | Compartment creation | **Done** | prism-compliance | compartment.rs | 6 unit | Week 2 Day 7 |
 | SR_GOV_32 | Compartment member add | **Done** | prism-compliance | compartment.rs | 4 unit | Week 2 Day 7 |
 | SR_GOV_33 | Compartment access check | **Done** | prism-compliance | compartment.rs | 5 unit | Week 2 Day 7 |
+| SR_GOV_34 | Compartment member revocation | **Done** | prism-compliance | compartment.rs | 8 unit | Week 2 Day 10 |
+| SR_GOV_67 | Alert routing by severity | **Done** | prism-governance | alert_routing.rs | 8 unit | Week 2 Day 10 |
+| SR_GOV_19 | Rule publication with dry-run | **Done** | prism-governance | rule_versioning.rs | 8 unit | Week 2 Day 10 |
+| SR_GOV_20 | Rule conflict detection | **Done** | prism-governance | rule_versioning.rs | 6 unit | Week 2 Day 10 |
 | SR_GOV_52 | Crypto-shredding | Deferred | prism-compliance | crypto_shredding.rs | -- | Week 3+ (needs CaaS) |
 | SR_DM_01 | Tenant node creation | **Done** | prism-governance | pg_tenant_repo.rs | -- | Day 3 (PG only; Neo4j Week 2) |
 | SR_DM_02 | Person node creation | **Done** | prism-identity | pg_repository.rs | -- | Day 4 (PG only) |

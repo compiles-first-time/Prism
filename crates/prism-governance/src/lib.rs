@@ -1,3 +1,4 @@
+pub mod alert_routing;
 pub mod audit_path;
 pub mod break_glass;
 pub mod committee;
@@ -9,6 +10,7 @@ pub mod meta_policy;
 pub mod pg_tenant_repo;
 pub mod project;
 pub mod rule_engine;
+pub mod rule_versioning;
 pub mod shared_services;
 pub mod sod;
 pub mod tenant;

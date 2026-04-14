@@ -235,6 +235,36 @@ pub enum ExportFormat {
     Pdf,
 }
 
+/// Type of conflict between governance rules.
+/// Implements: SR_GOV_20
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictType {
+    /// Two rules produce opposite decisions for the same action/attributes.
+    Contradiction,
+    /// One rule is a strict subset of another (broader rule makes narrower redundant).
+    Subsumption,
+    /// Two rules overlap partially, creating ambiguous outcomes.
+    Overlap,
+}
+
+/// Alert channel for severity-based routing.
+/// Implements: SR_GOV_67
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AlertChannel {
+    /// Page the on-call engineer (PagerDuty, OpsGenie, etc.).
+    Page,
+    /// SMS notification.
+    Sms,
+    /// In-app notification (real-time).
+    InApp,
+    /// Email notification.
+    Email,
+    /// Digest (batched, lower urgency).
+    Digest,
+}
+
 /// Source layer that produced a governance event (SR_GOV_47).
 /// Maps to the architectural layers in the PRISM spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

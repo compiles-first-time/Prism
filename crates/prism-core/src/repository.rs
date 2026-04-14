@@ -128,6 +128,58 @@ pub trait CompartmentRepository: Send + Sync {
         person_id: UserId,
         role_ids: &[RoleId],
     ) -> Result<bool, PrismError>;
+
+    /// Remove a membership record (person or role).
+    /// Returns true if a membership was actually removed, false if it didn't exist.
+    /// Implements: SR_GOV_34
+    async fn remove_member(
+        &self,
+        tenant_id: TenantId,
+        compartment_id: CompartmentId,
+        person_id: Option<UserId>,
+        role_id: Option<RoleId>,
+    ) -> Result<bool, PrismError>;
+}
+
+// -- Ruleset Version Repository (SR_GOV_19) ---------------------------------
+
+/// Persistence operations for versioned governance rulesets.
+/// Implements: SR_GOV_19
+#[async_trait]
+pub trait RulesetVersionRepository: Send + Sync {
+    /// Store a new ruleset version.
+    async fn create(&self, version: &crate::types::RulesetVersion) -> Result<(), PrismError>;
+
+    /// Get the currently active version for a tenant.
+    async fn get_active(
+        &self,
+        tenant_id: TenantId,
+    ) -> Result<Option<crate::types::RulesetVersion>, PrismError>;
+
+    /// Get a specific version by ID.
+    async fn get_by_id(
+        &self,
+        tenant_id: TenantId,
+        version_id: uuid::Uuid,
+    ) -> Result<Option<crate::types::RulesetVersion>, PrismError>;
+
+    /// Promote a version to active (deactivating the current active version).
+    async fn promote(&self, tenant_id: TenantId, version_id: uuid::Uuid) -> Result<(), PrismError>;
+}
+
+// -- Decision Sample Repository (SR_GOV_19) ---------------------------------
+
+/// Provides recent decision samples for dry-run analysis.
+/// Implements: SR_GOV_19
+#[async_trait]
+pub trait DecisionSampleRepository: Send + Sync {
+    /// Get recent rule evaluation decisions for dry-run comparison.
+    /// Returns (action, attributes, previous_decision) tuples.
+    async fn get_recent_decisions(
+        &self,
+        tenant_id: TenantId,
+        limit: usize,
+    ) -> Result<Vec<(String, serde_json::Value, String)>, PrismError>;
 }
 
 // -- Audit Event Repository (SR_DM_05) --------------------------------------

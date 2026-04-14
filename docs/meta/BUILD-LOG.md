@@ -4,6 +4,69 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-14 -- Day 10 (Week 2): Compartment revocation, alert routing, rule versioning
+
+### Implemented
+- SR_GOV_34 revoke_member() on CompartmentService: compartment membership revocation with session termination
+  - SessionTerminator trait: pluggable session termination on revocation
+  - Validates exactly-one-of person/role, compartment existence, tenant isolation
+  - Terminates active sessions exposing compartment-bound data (via SessionTerminator)
+  - Audit trail: `compartment.member_removed` at HIGH severity
+  - CompartmentMembershipRemoveRequest/Result types in prism-core
+  - remove_member() added to CompartmentRepository trait
+  - 8 new tests: remove person/role, not-found returns false, validation, nonexistent compartment, access denied after revocation, session termination, graceful without terminator
+- SR_GOV_67 AlertRoutingService: severity-based alert routing per BP-29
+  - Severity matrix: CRITICAL→page+SMS+in-app+email, HIGH→in-app+email, MEDIUM→in-app+digest, LOW→digest only
+  - AlertChannelDispatcher trait: pluggable channel implementations
+  - AlertHistoryRepository trait: dispatch history for acknowledgement tracking
+  - Channel failure resilience: failed channels logged, remaining channels still dispatched
+  - AlertEvent/AlertDispatchResult/AlertHistoryEntry types in prism-core
+  - AlertChannel enum (Page, Sms, InApp, Email, Digest) in prism-core
+  - 8 new tests: all four severity levels, channel failure resilience, history recording, matrix validation, missing channel handling
+- SR_GOV_19 RulePublicationService: governance ruleset versioning with dry-run
+  - Grammar validation: non-empty rules, valid action patterns, JSON object conditions
+  - Dry-run engine: re-evaluates proposed rules against recent decision sample
+  - SR_GOV_19_BE-01: promotion blocked when >5% of decisions change (delta threshold)
+  - Atomic version promotion: deactivates old version, activates new
+  - Version numbering: monotonically increasing per tenant
+  - Conflict detection gate: SR_GOV_20 runs before dry-run, HIGH conflicts block
+  - RulesetVersionRepository + DecisionSampleRepository traits in prism-core
+  - RulesetVersion entity, RulePublishRequest/Result, DryRunReport types
+  - 8 new tests: low delta promotes, high delta blocks, empty ruleset, invalid grammar, no history promotes, version incrementing, contradiction blocks
+- SR_GOV_20 ConflictDetector: static analysis of governance rulesets
+  - Contradiction detection: ENFORCE vs ADVISE with overlapping conditions → HIGH severity, blocks promotion
+  - Subsumption detection: one rule's conditions are a strict subset of another's → MEDIUM
+  - Overlap detection: partial condition overlap → MEDIUM
+  - Wildcard action matching (e.g., "*" overlaps with any specific action)
+  - ConflictType enum, ConflictScanRequest, RuleConflictReport types
+  - 6 new tests: contradiction, subsumption, non-overlapping, wildcard overlap, contradiction blocks, empty ruleset
+
+### Design Decisions
+- SessionTerminator is optional on CompartmentService (via `with_session_terminator` constructor) for backward compatibility with existing services that don't need session kill
+- AlertRoutingService dispatches all available channels even if some fail -- alert delivery is best-effort per channel but the overall route succeeds
+- RulePublicationService integrates ConflictDetector as a gate BEFORE dry-run -- no point computing dry-run if rules are self-contradictory
+- Delta threshold is a constant (5.0%) per SR_GOV_19_BE-01; can be made per-tenant later via governance_rules
+- ConflictDetector is a pure-function analyzer (no I/O) -- can be called standalone or as part of the publication pipeline
+- Condition matching logic is shared between RuleEngine and RulePublicationService (same simple attribute-matching model)
+
+### Files Changed
+- `crates/prism-core/src/types/enums.rs` -- added ConflictType, AlertChannel enums
+- `crates/prism-core/src/types/requests.rs` -- added 16 request/result types for SR_GOV_34, SR_GOV_67, SR_GOV_19-22
+- `crates/prism-core/src/types/entities.rs` -- added RulesetVersion, AlertHistoryEntry entities
+- `crates/prism-core/src/repository.rs` -- added remove_member() to CompartmentRepository, RulesetVersionRepository, DecisionSampleRepository traits
+- `crates/prism-compliance/src/compartment.rs` -- added revoke_member(), SessionTerminator trait, 8 tests
+- `crates/prism-governance/src/alert_routing.rs` -- new file, AlertRoutingService + AlertChannelDispatcher + AlertHistoryRepository + 8 tests
+- `crates/prism-governance/src/rule_versioning.rs` -- new file, RulePublicationService + ConflictDetector + 14 tests
+- `crates/prism-governance/src/lib.rs` -- registered alert_routing + rule_versioning modules
+
+### Test Summary
+- 30 new tests (8 compartment revocation + 8 alert routing + 8 publication + 6 conflict detection)
+- 15 new types in prism-core (enums, entities, request/result structs)
+- 140 total workspace tests, all passing
+- All quality gates green: fmt, clippy, test, check
+
+---
+
 ## Session 2026-04-14 -- Day 9 (Week 2): ADVISE override justification (SR_GOV_18)
 
 ### Implemented

@@ -337,6 +337,186 @@ pub struct CompartmentAccessCheckResult {
     pub reason: Option<String>,
 }
 
+// -- Compartment revocation requests (SR_GOV_34) ----------------------------
+
+/// Request to revoke compartment membership for a person or role.
+/// Exactly one of person_id or role_id must be provided.
+/// Implements: SR_GOV_34
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompartmentMembershipRemoveRequest {
+    pub tenant_id: TenantId,
+    pub compartment_id: CompartmentId,
+    pub person_id: Option<UserId>,
+    pub role_id: Option<RoleId>,
+}
+
+/// Result of a membership revocation.
+/// Implements: SR_GOV_34
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompartmentMembershipRemoveResult {
+    pub compartment_id: CompartmentId,
+    /// Whether a membership was actually removed.
+    pub removed: bool,
+    /// Number of sessions terminated due to the revocation.
+    pub sessions_terminated: u64,
+}
+
+// -- Alert routing requests (SR_GOV_67) --------------------------------------
+
+/// An alert event to be routed via the severity matrix.
+/// Implements: SR_GOV_67
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertEvent {
+    pub tenant_id: TenantId,
+    pub severity: Severity,
+    /// Source system or SR that raised the alert.
+    pub source: String,
+    pub message: String,
+    /// Attribution: who or what caused the condition.
+    pub attribution: Option<String>,
+}
+
+/// Result of alert dispatch via the severity matrix.
+/// Implements: SR_GOV_67
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertDispatchResult {
+    /// Recipients who received the alert.
+    pub recipients: Vec<String>,
+    /// Dispatch identifiers for acknowledgement tracking.
+    pub dispatch_ids: Vec<String>,
+    /// Channels used for dispatch.
+    pub channels_used: Vec<String>,
+}
+
+// -- Rule publication requests (SR_GOV_19) -----------------------------------
+
+/// Request to publish a new version of a governance rule set.
+/// Implements: SR_GOV_19
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RulePublishRequest {
+    pub tenant_id: TenantId,
+    /// The rules to include in this version.
+    pub rules: Vec<GovernanceRule>,
+    /// Description of what changed in this version.
+    pub change_description: String,
+    /// Number of recent decisions to use for dry-run (default 100).
+    pub dry_run_sample_size: Option<usize>,
+}
+
+/// Result of a rule publication attempt.
+/// Implements: SR_GOV_19
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RulePublishResult {
+    /// The version ID assigned to this publication.
+    pub version_id: uuid::Uuid,
+    /// Dry-run report showing what would change.
+    pub dry_run_report: DryRunReport,
+    /// Whether the version was promoted to active.
+    pub promoted: bool,
+}
+
+/// Dry-run report showing the impact of proposed rule changes.
+/// Implements: SR_GOV_19
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DryRunReport {
+    /// Total decisions sampled.
+    pub sample_size: usize,
+    /// Decisions that would have changed under the new rules.
+    pub decisions_changed: usize,
+    /// Percentage of decisions affected.
+    pub delta_percentage: f64,
+    /// Whether the delta exceeds the promotion threshold (5%).
+    pub exceeds_threshold: bool,
+    /// Per-rule breakdown of changes.
+    pub rule_deltas: Vec<RuleDelta>,
+}
+
+/// Per-rule impact in a dry-run report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleDelta {
+    pub rule_name: String,
+    pub new_denials: usize,
+    pub new_allowances: usize,
+}
+
+// -- Rule conflict detection requests (SR_GOV_20) ----------------------------
+
+/// Request to scan a ruleset for internal conflicts.
+/// Implements: SR_GOV_20
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConflictScanRequest {
+    pub tenant_id: TenantId,
+    /// The rules to scan for conflicts.
+    pub rules: Vec<GovernanceRule>,
+}
+
+/// A conflict between two governance rules.
+/// Implements: SR_GOV_20
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleConflict {
+    pub rule_a: String,
+    pub rule_b: String,
+    pub conflict_type: ConflictType,
+    pub description: String,
+}
+
+/// Report of all conflicts found in a ruleset.
+/// Implements: SR_GOV_20
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleConflictReport {
+    pub conflicts: Vec<RuleConflict>,
+    /// Overall severity: HIGH if any contradiction found, LOW for subsumption only.
+    pub severity: Severity,
+    /// Whether this conflict report should block rule promotion.
+    pub blocks_promotion: bool,
+}
+
+// -- Rule rollback requests (SR_GOV_21) --------------------------------------
+
+/// Request to roll back to a prior ruleset version.
+/// Implements: SR_GOV_21
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleRollbackRequest {
+    pub tenant_id: TenantId,
+    /// The version to roll back to.
+    pub target_version_id: uuid::Uuid,
+    /// Reason for the rollback.
+    pub reason: String,
+}
+
+/// Result of a rule rollback.
+/// Implements: SR_GOV_21
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleRollbackResult {
+    /// The now-active version after rollback.
+    pub active_version: uuid::Uuid,
+    pub rollback_reason: String,
+}
+
+// -- Rule export requests (SR_GOV_22) ----------------------------------------
+
+/// Request to export rules in effect at a given date.
+/// Implements: SR_GOV_22
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleExportRequest {
+    pub tenant_id: TenantId,
+    /// Export rules as they were on this date.
+    pub as_of_date: DateTime<Utc>,
+    pub format: ExportFormat,
+}
+
+/// Result of a rule export.
+/// Implements: SR_GOV_22
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleExportResult {
+    /// Serialized export payload.
+    pub export_payload: Vec<u8>,
+    /// Hex-encoded signature of the export.
+    pub signature: String,
+    /// Number of rules included.
+    pub rule_count: usize,
+}
+
 // -- Lifecycle requests (FOUND S 1.5.1) -------------------------------------
 
 /// A validated state transition produced by the lifecycle state machine.
