@@ -17,8 +17,8 @@
 | SR_GOV_47 | Audit event writing | **Done** | prism-audit | event_store.rs | 5 unit | Day 2 |
 | SR_GOV_48 | Chain verification | **Done** | prism-audit | merkle_chain.rs | 4 unit | Day 2 |
 | SR_GOV_49 | Audit query | **Done** | prism-audit | event_store.rs | 1 unit | Day 2 |
-| SR_GOV_50 | Audit export | Deferred | prism-audit | -- | -- | Week 2 |
-| SR_GOV_51 | Tamper response | Deferred | prism-audit | -- | -- | Week 2 |
+| SR_GOV_50 | Audit export | **Done** | prism-audit | audit_export.rs | 6 unit | Week 2 Day 6 |
+| SR_GOV_51 | Tamper response | **Done** | prism-audit | tamper_response.rs | 6 unit | Week 2 Day 6 |
 | SR_GOV_52 | Crypto-shredding | Deferred | prism-compliance | crypto_shredding.rs | -- | Week 3+ (needs CaaS) |
 | SR_DM_01 | Tenant node creation | **Done** | prism-governance | pg_tenant_repo.rs | -- | Day 3 (PG only; Neo4j Week 2) |
 | SR_DM_02 | Person node creation | **Done** | prism-identity | pg_repository.rs | -- | Day 4 (PG only) |

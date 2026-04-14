@@ -165,6 +165,19 @@ pub enum ActorType {
     System,
 }
 
+/// Export format for audit trail regulatory exports.
+/// Implements: SR_GOV_50
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportFormat {
+    /// JSON lines -- one event per line, signed envelope.
+    JsonLines,
+    /// CSV with header row.
+    Csv,
+    /// PDF report with chain proof appendix.
+    Pdf,
+}
+
 /// Source layer that produced a governance event (SR_GOV_47).
 /// Maps to the architectural layers in the PRISM spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

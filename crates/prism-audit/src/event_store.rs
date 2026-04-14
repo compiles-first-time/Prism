@@ -17,6 +17,7 @@ use prism_core::repository::AuditEventRepository;
 use prism_core::types::*;
 
 use crate::merkle_chain::MerkleChainHasher;
+use crate::tamper_response::TamperResponseService;
 
 /// The reusable audit logger service.
 ///
@@ -144,11 +145,45 @@ impl AuditLogger {
     pub async fn query(&self, request: &AuditQueryRequest) -> Result<AuditQueryResult, PrismError> {
         self.repo.query(request).await
     }
+
+    /// Verify the chain and, if tampering is detected, trigger the tamper
+    /// response workflow (write-freeze + alert + incident).
+    ///
+    /// This is the composed path: SR_GOV_48 -> SR_GOV_51.
+    ///
+    /// Implements: SR_GOV_48, SR_GOV_51
+    pub async fn verify_and_respond(
+        &self,
+        tenant_id: TenantId,
+        depth: u32,
+        responder: &TamperResponseService,
+    ) -> Result<ChainVerificationResult, PrismError> {
+        let result = self.verify_chain(tenant_id, depth).await?;
+
+        if !result.is_valid {
+            let input = TamperResponseInput {
+                tenant_id,
+                mismatch_at: result.mismatch_at.unwrap_or(-1),
+                anchor_hash: result.anchor_hash.clone(),
+            };
+
+            warn!(
+                tenant_id = %tenant_id,
+                mismatch_at = ?result.mismatch_at,
+                "chain verification failed -- initiating tamper response"
+            );
+
+            responder.respond(&input).await?;
+        }
+
+        Ok(result)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tamper_response::{AlertDispatcher, IncidentTracker, TenantWriteFreeze};
     use async_trait::async_trait;
     use std::sync::Mutex;
 
@@ -345,5 +380,135 @@ mod tests {
         let vb = logger.verify_chain(tenant_b, 10).await.unwrap();
         assert!(va.is_valid);
         assert!(vb.is_valid);
+    }
+
+    // -- Mock traits for tamper response integration -------------------------
+
+    struct MockFreeze {
+        frozen: Mutex<Vec<TenantId>>,
+    }
+
+    impl MockFreeze {
+        fn new() -> Self {
+            Self {
+                frozen: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn is_frozen(&self, tenant_id: TenantId) -> bool {
+            self.frozen.lock().unwrap().contains(&tenant_id)
+        }
+    }
+
+    #[async_trait]
+    impl TenantWriteFreeze for MockFreeze {
+        async fn freeze(&self, tenant_id: TenantId) -> Result<bool, PrismError> {
+            let mut frozen = self.frozen.lock().unwrap();
+            if frozen.contains(&tenant_id) {
+                Ok(false)
+            } else {
+                frozen.push(tenant_id);
+                Ok(true)
+            }
+        }
+
+        async fn is_frozen(&self, tenant_id: TenantId) -> Result<bool, PrismError> {
+            Ok(self.frozen.lock().unwrap().contains(&tenant_id))
+        }
+    }
+
+    struct MockAlerter;
+
+    #[async_trait]
+    impl AlertDispatcher for MockAlerter {
+        async fn dispatch_critical(
+            &self,
+            _title: &str,
+            _detail: serde_json::Value,
+        ) -> Result<(), PrismError> {
+            Ok(())
+        }
+    }
+
+    struct MockIncidents {
+        counter: Mutex<u32>,
+    }
+
+    impl MockIncidents {
+        fn new() -> Self {
+            Self {
+                counter: Mutex::new(0),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl IncidentTracker for MockIncidents {
+        async fn create_incident(
+            &self,
+            _title: &str,
+            _severity: Severity,
+            _detail: serde_json::Value,
+        ) -> Result<String, PrismError> {
+            let mut counter = self.counter.lock().unwrap();
+            *counter += 1;
+            Ok(format!("INC-{:04}", *counter))
+        }
+    }
+
+    fn make_responder(freeze: Arc<MockFreeze>) -> TamperResponseService {
+        TamperResponseService::new(
+            freeze,
+            Arc::new(MockAlerter),
+            Arc::new(MockIncidents::new()),
+        )
+    }
+
+    #[tokio::test]
+    async fn verify_and_respond_triggers_on_tamper() {
+        let repo = Arc::new(MockAuditRepo::new());
+        let logger = AuditLogger::new(repo.clone());
+        let tenant_id = TenantId::new();
+
+        logger.log(test_input(tenant_id)).await.unwrap();
+        logger.log(test_input(tenant_id)).await.unwrap();
+
+        // Tamper with the stored event
+        {
+            let mut events = repo.events.lock().unwrap();
+            events[1].event_hash = "tampered".into();
+        }
+
+        let freeze = Arc::new(MockFreeze::new());
+        let responder = make_responder(freeze.clone());
+
+        let result = logger
+            .verify_and_respond(tenant_id, 10, &responder)
+            .await
+            .unwrap();
+
+        assert!(!result.is_valid);
+        assert!(freeze.is_frozen(tenant_id));
+    }
+
+    #[tokio::test]
+    async fn verify_and_respond_skips_response_when_valid() {
+        let repo = Arc::new(MockAuditRepo::new());
+        let logger = AuditLogger::new(repo.clone());
+        let tenant_id = TenantId::new();
+
+        logger.log(test_input(tenant_id)).await.unwrap();
+        logger.log(test_input(tenant_id)).await.unwrap();
+
+        let freeze = Arc::new(MockFreeze::new());
+        let responder = make_responder(freeze.clone());
+
+        let result = logger
+            .verify_and_respond(tenant_id, 10, &responder)
+            .await
+            .unwrap();
+
+        assert!(result.is_valid);
+        assert!(!freeze.is_frozen(tenant_id));
     }
 }

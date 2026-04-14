@@ -103,6 +103,80 @@ pub struct ChainVerificationResult {
     pub anchor_hash: String,
 }
 
+// -- Audit export requests (SR_GOV_50) ----------------------------------------
+
+/// Request to export an audit slice for regulatory or examiner review.
+/// The export is signed and includes a chain proof for integrity verification.
+/// Implements: SR_GOV_50
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditExportRequest {
+    pub tenant_id: TenantId,
+    pub time_range: TimeRange,
+    pub format: ExportFormat,
+}
+
+/// Time range for audit queries and exports.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeRange {
+    pub from: DateTime<Utc>,
+    pub to: DateTime<Utc>,
+}
+
+/// Cryptographic chain proof embedded in an audit export.
+/// Allows a verifier to confirm the exported segment is contiguous
+/// and anchored to the live chain.
+/// Implements: SR_GOV_50
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChainProof {
+    /// Hash of the first event in the exported segment.
+    pub anchor_hash: String,
+    /// Hash of the last event in the exported segment.
+    pub tip_hash: String,
+    /// Number of events in the proven segment.
+    pub segment_length: u64,
+    /// Chain positions covered: [start, end] inclusive.
+    pub position_range: (i64, i64),
+}
+
+/// Result of an audit export operation.
+/// Contains the serialized export payload, a cryptographic signature,
+/// and the chain proof linking this slice to the live chain.
+/// Implements: SR_GOV_50
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditExportResult {
+    /// Serialized export payload (format determined by request).
+    pub export_payload: Vec<u8>,
+    /// Hex-encoded HMAC-SHA256 signature of the export payload.
+    pub signature: String,
+    /// Chain proof linking this export to the tenant's audit chain.
+    pub chain_proof: ChainProof,
+    /// Number of events included in the export.
+    pub event_count: u64,
+}
+
+// -- Tamper response requests (SR_GOV_51) -------------------------------------
+
+/// Input triggered by SR_GOV_48 when chain verification detects tampering.
+/// Implements: SR_GOV_51
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TamperResponseInput {
+    pub tenant_id: TenantId,
+    /// Chain position where the mismatch was detected.
+    pub mismatch_at: i64,
+    /// The anchor hash of the verified segment.
+    pub anchor_hash: String,
+}
+
+/// Result of the tamper response workflow.
+/// Implements: SR_GOV_51
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TamperResponseResult {
+    /// Whether tenant writes have been frozen.
+    pub freeze_active: bool,
+    /// Incident ticket identifier for the security investigation.
+    pub incident_id: String,
+}
+
 // -- Lifecycle requests (FOUND S 1.5.1) -------------------------------------
 
 /// A validated state transition produced by the lifecycle state machine.

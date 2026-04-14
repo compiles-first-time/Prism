@@ -4,6 +4,51 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-13 -- Day 6 (Week 2): SR_GOV_50 audit export + SR_GOV_51 tamper response
+
+### Implemented
+- AuditExportService (SR_GOV_50): signed audit export with chain proof for regulatory review
+  - ExportSigner trait for pluggable signing (HMAC, RSA, HSM)
+  - ExportFormat enum: JsonLines, Csv, Pdf
+  - Chain integrity verification before export (rejects tampered segments)
+  - ChainProof struct: anchor_hash, tip_hash, segment_length, position_range
+  - Time-range filtering via existing AuditEventRepository.query()
+  - 6 unit tests: JSON lines export, CSV format, empty range rejection, tampered chain rejection, chain proof boundaries, signature determinism
+- TamperResponseService (SR_GOV_51): incident response when chain verification detects tampering
+  - TenantWriteFreeze trait: freeze/is_frozen for tenant governance writes
+  - AlertDispatcher trait: dispatch_critical for platform security officer alerts
+  - IncidentTracker trait: create_incident for security investigation tickets
+  - Three-step workflow: freeze writes -> send CRITICAL alert -> open incident
+  - Idempotent freeze (re-triggering same tenant does not double-freeze)
+  - 6 unit tests: freeze activation, alert dispatch, incident creation, idempotent freeze, tenant isolation, mismatch details
+- SR_GOV_48 -> SR_GOV_51 wiring: verify_and_respond() on AuditLogger
+  - Composes chain verification with tamper response in a single call
+  - 2 integration tests: triggers on tamper, skips response when valid
+- ExportFormat enum and request/result types added to prism-core
+
+### Design Decisions
+- ExportSigner is a trait for testability; real impl will use Vault-backed HMAC or RSA
+- TenantWriteFreeze is separate from audit writes -- audit chain must remain writable to record the freeze event itself
+- TamperResponseService takes three trait objects (freeze, alerter, incidents) -- each can be replaced independently
+- Recovery is intentionally manual per spec; no automated chain repair
+- verify_and_respond() is the composed path (SR_GOV_48 -> SR_GOV_51); verify_chain() remains available standalone
+- PDF export produces canonical JSON source (rendering is a view-layer concern)
+
+### Files Changed
+- `crates/prism-core/src/types/enums.rs` -- added ExportFormat enum
+- `crates/prism-core/src/types/requests.rs` -- added AuditExportRequest, AuditExportResult, ChainProof, TimeRange, TamperResponseInput, TamperResponseResult
+- `crates/prism-audit/src/audit_export.rs` -- new file, ExportSigner trait + AuditExportService + 6 tests
+- `crates/prism-audit/src/tamper_response.rs` -- new file, 3 traits + TamperResponseService + 6 tests
+- `crates/prism-audit/src/event_store.rs` -- added verify_and_respond() + 2 integration tests
+- `crates/prism-audit/src/lib.rs` -- registered audit_export + tamper_response modules
+
+### Test Summary
+- 14 new tests in prism-audit (6 export + 6 tamper + 2 wiring)
+- 56 total workspace tests, all passing
+- All quality gates green: fmt, clippy, test, check
+
+---
+
 ## Session 2026-04-13 -- Day 5: SyncCoordinator stub + quality gates
 
 ### Implemented
