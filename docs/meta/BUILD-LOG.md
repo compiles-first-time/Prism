@@ -4,6 +4,36 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-13 -- Day 4: Identity + tenant isolation + event bus
+
+### Implemented
+- IdentityService (SR_GOV_10, FOUND S 1.3.1): user provisioning with email validation/normalization/dedup, service principal provisioning with kill switch, tenant isolation enforcement on deactivation
+- PgUserRepository (SR_DM_02): create, get_by_id, get_by_email with constraint-based dedup
+- PgServicePrincipalRepository (SR_DM_20): create, get_by_id, list_by_tenant, deactivate
+- TenantContext/TenantFilter (SR_DM_27): programmatic tenant isolation at service layer, enforce() guard
+- EventBusPublisher (REUSABLE): trait + InMemoryEventBus + NoOpEventBus implementations
+- 16 new unit tests (10 identity, 3 tenant filter, 3 event bus)
+
+### Design Decisions
+- IdentityService owns both UserRepository and ServicePrincipalRepository (identity is one domain)
+- Email normalization: trim + lowercase before persistence and dedup check
+- SP kill switch verifies tenant ownership before deactivation (cross-tenant forbidden)
+- EventBusPublisher is a trait -- Redis Streams impl deferred until infra is wired
+- TenantContext is a simple value object; full query-rewrite RLS deferred to Week 2+
+
+### Files Changed
+- `crates/prism-core/src/tenant_filter.rs` -- new file, TenantContext + 3 tests
+- `crates/prism-core/src/lib.rs` -- added tenant_filter module
+- `crates/prism-identity/src/service_principal.rs` -- full IdentityService + 10 tests
+- `crates/prism-identity/src/pg_repository.rs` -- new file, PG repos for User + SP
+- `crates/prism-identity/src/lib.rs` -- added pg_repository module
+- `crates/prism-identity/Cargo.toml` -- added prism-audit, sqlx, async-trait deps
+- `crates/prism-runtime/src/event_bus.rs` -- new file, trait + 2 impls + 3 tests
+- `crates/prism-runtime/src/lib.rs` -- added event_bus module
+- `crates/prism-runtime/Cargo.toml` -- added async-trait dep
+
+---
+
 ## Session 2026-04-13 -- Day 3: Tenant model + lifecycle state machine
 
 ### Implemented
