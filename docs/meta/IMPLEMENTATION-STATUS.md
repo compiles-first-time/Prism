@@ -29,6 +29,12 @@
 | SR_GOV_67 | Alert routing by severity | **Done** | prism-governance | alert_routing.rs | 8 unit | Week 2 Day 10 |
 | SR_GOV_19 | Rule publication with dry-run | **Done** | prism-governance | rule_versioning.rs | 8 unit | Week 2 Day 10 |
 | SR_GOV_20 | Rule conflict detection | **Done** | prism-governance | rule_versioning.rs | 6 unit | Week 2 Day 10 |
+| SR_GOV_21 | Rule rollback | **Done** | prism-governance | rule_versioning.rs | 4 unit | Week 2 Day 11 |
+| SR_GOV_22 | Rule export | **Done** | prism-governance | rule_versioning.rs | 5 unit | Week 2 Day 11 |
+| SR_GOV_37 | Query analytics capture | **Done** | prism-governance | query_analytics.rs | 3 unit | Week 2 Day 11 |
+| SR_GOV_38 | Query analytics aggregation | **Done** | prism-governance | query_analytics.rs | 1 unit | Week 2 Day 11 |
+| SR_GOV_39 | Analytics access control | **Done** | prism-governance | query_analytics.rs | 6 unit | Week 2 Day 11 |
+| SR_GOV_40 | Analytics export | **Done** | prism-governance | query_analytics.rs | 2 unit | Week 2 Day 11 |
 | SR_GOV_52 | Crypto-shredding | Deferred | prism-compliance | crypto_shredding.rs | -- | Week 3+ (needs CaaS) |
 | SR_DM_01 | Tenant node creation | **Done** | prism-governance | pg_tenant_repo.rs | -- | Day 3 (PG only; Neo4j Week 2) |
 | SR_DM_02 | Person node creation | **Done** | prism-identity | pg_repository.rs | -- | Day 4 (PG only) |

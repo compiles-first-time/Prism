@@ -4,6 +4,62 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-14 -- Day 11 (Week 2): Rule rollback, export, query analytics (SR_GOV_21-22, SR_GOV_37-40)
+
+### Implemented
+- SR_GOV_21 RuleRollbackService: atomic rollback to a prior ruleset version
+  - Validates target version exists and is not already active
+  - Requires non-empty rollback reason
+  - Atomically promotes the target version (deactivates current)
+  - Audit trail: `governance.rule_rolled_back` at HIGH severity
+  - 4 new tests: rollback succeeds, nonexistent version, already-active, empty reason
+- SR_GOV_22 RuleExportService: signed export of rules in effect for regulatory review
+  - RuleExportSigner trait for pluggable signing
+  - Exports in JSON Lines, CSV, or PDF (canonical JSON) formats
+  - Audit trail: `governance.rules_exported` at MEDIUM severity
+  - 5 new tests: JSON lines export, CSV format, PDF format, no active version, signature determinism
+- SR_GOV_37 QueryAnalyticsService.capture(): privacy-level stripping for query events
+  - Anonymous: user_id, role, department all stripped
+  - Role: user_id stripped, role/department retained
+  - Individual: all fields retained
+  - StoredAnalyticsEvent entity, QueryAnalyticsRepository trait
+  - 3 new tests: anonymous strips all, role strips user_id, individual retains all
+- SR_GOV_38 QueryAnalyticsService.aggregate(): periodic aggregation into summaries
+  - AnalyticsAggregate entity, AnalyticsAggregateRepository trait
+  - MVP tenant-level aggregation (per-role/dept deferred to PG impl)
+  - 1 new test: aggregation writes summary
+- SR_GOV_39 AnalyticsAccessService: access control matrix per D-17
+  - Anonymous: visible to anyone
+  - RoleBased: visible to department_head, c_suite, platform_admin, tenant_admin
+  - Individual: visible only to self or designated admin (admin access audited)
+  - 6 new tests: anonymous allows, role allows dept head, role denies regular, individual allows self, individual allows admin, individual denies other
+- SR_GOV_40 AnalyticsExportService: signed analytics export inheriting SR_GOV_39 access control
+  - Access check (SR_GOV_39) runs before export generation
+  - AnalyticsExportSigner trait for pluggable signing
+  - 2 new tests: export succeeds with access, export denied without access
+
+### Design Decisions
+- RuleRollbackService is separate from RulePublicationService -- different authorization requirements (rollback is emergency, publication is planned)
+- RuleExportSigner is a separate trait from the audit ExportSigner -- rule exports may use a different key pair
+- QueryAnalyticsService._audit is reserved for future use -- capture events are high-volume inline writes; per-event audit logging deferred to PG-level triggers
+- ELEVATED_ROLES constant defines who can access role-scoped analytics; modifiable via governance rules later
+- Admin access to individual analytics generates a HIGH-severity audit event (surveillance prevention per D-17)
+- PrivacyLevel, AnalyticsScope, ComplexityTier, QueryOutcome enums added to prism-core
+
+### Files Changed
+- `crates/prism-core/src/types/enums.rs` -- added PrivacyLevel, AnalyticsScope, ComplexityTier, QueryOutcome enums
+- `crates/prism-core/src/types/requests.rs` -- added 10 request/result types for SR_GOV_37-40
+- `crates/prism-governance/src/rule_versioning.rs` -- added RuleRollbackService, RuleExportService, RuleExportSigner trait, 9 tests
+- `crates/prism-governance/src/query_analytics.rs` -- new file, 4 services + 5 traits + 12 tests
+- `crates/prism-governance/src/lib.rs` -- registered query_analytics module
+
+### Test Summary
+- 21 new tests (4 rollback + 5 export + 3 capture + 1 aggregation + 6 access + 2 analytics export)
+- 161 total workspace tests, all passing
+- All quality gates green: fmt, clippy, test, check
+
+---
+
 ## Session 2026-04-14 -- Day 10 (Week 2): Compartment revocation, alert routing, rule versioning
 
 ### Implemented

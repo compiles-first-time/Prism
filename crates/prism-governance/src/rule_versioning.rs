@@ -6,10 +6,14 @@
 //! - **SR_GOV_20**: Detect conflicts (contradiction, subsumption, overlap)
 //!   between rules within a ruleset.
 //!
-//! Implements: SR_GOV_19, SR_GOV_19_BE-01, SR_GOV_20
+//! - **SR_GOV_21**: Roll back to a prior ruleset version atomically.
+//! - **SR_GOV_22**: Export rules in effect at a given date for regulatory review.
+//!
+//! Implements: SR_GOV_19, SR_GOV_19_BE-01, SR_GOV_20, SR_GOV_21, SR_GOV_22
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use tracing::{info, warn};
 
 use prism_audit::event_store::AuditLogger;
@@ -479,6 +483,244 @@ impl ConflictDetector {
         }
 
         None
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RuleRollbackService (SR_GOV_21)
+// ---------------------------------------------------------------------------
+
+/// Service for rolling back to a prior governance ruleset version.
+///
+/// Composes:
+/// - `RulesetVersionRepository` -- versioned ruleset persistence
+/// - `AuditLogger` -- audit trail
+///
+/// Implements: SR_GOV_21
+pub struct RuleRollbackService {
+    versions: Arc<dyn RulesetVersionRepository>,
+    audit: AuditLogger,
+}
+
+impl RuleRollbackService {
+    /// Create a new rule rollback service.
+    pub fn new(versions: Arc<dyn RulesetVersionRepository>, audit: AuditLogger) -> Self {
+        Self { versions, audit }
+    }
+
+    /// Roll back to a prior ruleset version atomically.
+    ///
+    /// Validates:
+    /// - Target version exists and belongs to the requesting tenant
+    /// - Target version is not already the active version
+    ///
+    /// Implements: SR_GOV_21
+    pub async fn rollback(
+        &self,
+        request: &RuleRollbackRequest,
+    ) -> Result<RuleRollbackResult, PrismError> {
+        if request.reason.trim().is_empty() {
+            return Err(PrismError::Validation {
+                reason: "rollback reason cannot be empty".into(),
+            });
+        }
+
+        // Verify target version exists
+        let target = self
+            .versions
+            .get_by_id(request.tenant_id, request.target_version_id)
+            .await?
+            .ok_or(PrismError::NotFound {
+                entity_type: "RulesetVersion",
+                id: request.target_version_id,
+            })?;
+
+        // Check not already active
+        let current = self.versions.get_active(request.tenant_id).await?;
+        if let Some(ref active) = current {
+            if active.id == request.target_version_id {
+                return Err(PrismError::Validation {
+                    reason: "target version is already active".into(),
+                });
+            }
+        }
+
+        // Atomically promote the target version
+        self.versions
+            .promote(request.tenant_id, request.target_version_id)
+            .await?;
+
+        // Audit trail
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: request.tenant_id,
+                event_type: "governance.rule_rolled_back".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::Human,
+                target_id: Some(request.target_version_id),
+                target_type: Some("RulesetVersion".into()),
+                severity: Severity::High,
+                source_layer: SourceLayer::Governance,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "target_version": target.version_number,
+                    "reason": request.reason,
+                    "previous_active": current.map(|c| c.id.to_string()),
+                }),
+            })
+            .await?;
+
+        warn!(
+            tenant_id = %request.tenant_id,
+            target_version = target.version_number,
+            reason = %request.reason,
+            "ruleset rolled back"
+        );
+
+        Ok(RuleRollbackResult {
+            active_version: request.target_version_id,
+            rollback_reason: request.reason.clone(),
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RuleExportService (SR_GOV_22)
+// ---------------------------------------------------------------------------
+
+/// Trait for signing rule export bundles.
+///
+/// Implements: SR_GOV_22 (signing key asset)
+#[async_trait]
+pub trait RuleExportSigner: Send + Sync {
+    /// Sign the given payload bytes and return a hex-encoded signature.
+    async fn sign(&self, payload: &[u8]) -> Result<String, PrismError>;
+}
+
+/// Service for exporting governance rules in effect at a given date.
+///
+/// Produces a signed export bundle for regulatory or examiner review.
+///
+/// Composes:
+/// - `RulesetVersionRepository` -- versioned ruleset persistence
+/// - `RuleExportSigner` -- signs the export bundle
+/// - `AuditLogger` -- audit trail
+///
+/// Implements: SR_GOV_22
+pub struct RuleExportService {
+    versions: Arc<dyn RulesetVersionRepository>,
+    signer: Arc<dyn RuleExportSigner>,
+    audit: AuditLogger,
+}
+
+impl RuleExportService {
+    /// Create a new rule export service.
+    pub fn new(
+        versions: Arc<dyn RulesetVersionRepository>,
+        signer: Arc<dyn RuleExportSigner>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self {
+            versions,
+            signer,
+            audit,
+        }
+    }
+
+    /// Export the rules in effect for a tenant at the given date.
+    ///
+    /// Currently exports the active ruleset (historical point-in-time
+    /// lookup requires a versioned timeline, deferred to PG implementation).
+    ///
+    /// Implements: SR_GOV_22
+    pub async fn export(
+        &self,
+        request: &RuleExportRequest,
+    ) -> Result<RuleExportResult, PrismError> {
+        // Get the active version (point-in-time filtering deferred to PG impl)
+        let version = self
+            .versions
+            .get_active(request.tenant_id)
+            .await?
+            .ok_or_else(|| PrismError::Validation {
+                reason: "no active ruleset version for this tenant".into(),
+            })?;
+
+        // Serialize the ruleset based on requested format
+        let (payload, rule_count) = match request.format {
+            ExportFormat::JsonLines => {
+                let mut lines = Vec::new();
+                for rule in &version.rules {
+                    let line = serde_json::to_string(rule).map_err(|e| {
+                        PrismError::Internal(format!("failed to serialize rule: {e}"))
+                    })?;
+                    lines.push(line);
+                }
+                let payload = lines.join("\n").into_bytes();
+                (payload, version.rules.len())
+            }
+            ExportFormat::Csv => {
+                let mut csv = String::from("name,rule_class,action_pattern,is_active\n");
+                for rule in &version.rules {
+                    csv.push_str(&format!(
+                        "{},{:?},{},{}\n",
+                        rule.name, rule.rule_class, rule.action_pattern, rule.is_active
+                    ));
+                }
+                (csv.into_bytes(), version.rules.len())
+            }
+            ExportFormat::Pdf => {
+                // PDF rendering produces canonical JSON source
+                let json = serde_json::json!({
+                    "tenant_id": request.tenant_id,
+                    "as_of_date": request.as_of_date,
+                    "version_number": version.version_number,
+                    "rules": version.rules,
+                });
+                let payload = serde_json::to_vec_pretty(&json).map_err(|e| {
+                    PrismError::Internal(format!("failed to serialize ruleset: {e}"))
+                })?;
+                (payload, version.rules.len())
+            }
+        };
+
+        // Sign the export
+        let signature = self.signer.sign(&payload).await?;
+
+        // Audit trail
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: request.tenant_id,
+                event_type: "governance.rules_exported".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::Human,
+                target_id: Some(version.id),
+                target_type: Some("RulesetVersion".into()),
+                severity: Severity::Medium,
+                source_layer: SourceLayer::Governance,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "as_of_date": request.as_of_date,
+                    "format": request.format,
+                    "version_number": version.version_number,
+                    "rule_count": rule_count,
+                }),
+            })
+            .await?;
+
+        info!(
+            tenant_id = %request.tenant_id,
+            version = version.version_number,
+            format = ?request.format,
+            rule_count,
+            "rules exported"
+        );
+
+        Ok(RuleExportResult {
+            export_payload: payload,
+            signature,
+            rule_count,
+        })
     }
 }
 
@@ -1033,5 +1275,274 @@ mod tests {
         let report = ConflictDetector::scan(&[]);
         assert!(report.conflicts.is_empty());
         assert!(!report.blocks_promotion);
+    }
+
+    // -- Mock RuleExportSigner ------------------------------------------------
+
+    struct MockSigner;
+
+    #[async_trait]
+    impl RuleExportSigner for MockSigner {
+        async fn sign(&self, payload: &[u8]) -> Result<String, PrismError> {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            payload.hash(&mut hasher);
+            Ok(format!("{:016x}", hasher.finish()))
+        }
+    }
+
+    // -- SR_GOV_21 Rollback Helpers -------------------------------------------
+
+    fn make_rollback_service(versions: Arc<MockVersionRepo>) -> RuleRollbackService {
+        let audit_repo = Arc::new(MockAuditRepo);
+        let audit = AuditLogger::new(audit_repo);
+        RuleRollbackService::new(versions, audit)
+    }
+
+    fn make_export_service(versions: Arc<MockVersionRepo>) -> RuleExportService {
+        let audit_repo = Arc::new(MockAuditRepo);
+        let audit = AuditLogger::new(audit_repo);
+        let signer = Arc::new(MockSigner);
+        RuleExportService::new(versions, signer, audit)
+    }
+
+    /// Publish a ruleset and return its version_id for rollback/export tests.
+    async fn publish_version(
+        svc: &RulePublicationService,
+        tenant_id: TenantId,
+        desc: &str,
+    ) -> uuid::Uuid {
+        let request = RulePublishRequest {
+            tenant_id,
+            rules: vec![make_rule(
+                tenant_id,
+                &format!("rule_{desc}"),
+                "data.query",
+                RuleClass::Enforce,
+                serde_json::json!({"env": "prod"}),
+            )],
+            change_description: desc.into(),
+            dry_run_sample_size: None,
+        };
+        svc.publish(&request).await.unwrap().version_id
+    }
+
+    // -- SR_GOV_21 Rollback Tests ---------------------------------------------
+
+    #[tokio::test]
+    async fn rollback_to_prior_version() {
+        let versions = Arc::new(MockVersionRepo::new());
+        let decision_repo = Arc::new(MockDecisionRepo::with_decisions(vec![]));
+        let audit_repo = Arc::new(MockAuditRepo);
+        let audit = AuditLogger::new(audit_repo);
+        let pub_svc = RulePublicationService::new(versions.clone(), decision_repo, audit);
+
+        let tenant_id = TenantId::new();
+        let v1_id = publish_version(&pub_svc, tenant_id, "v1").await;
+        let _v2_id = publish_version(&pub_svc, tenant_id, "v2").await;
+
+        // v2 is active; roll back to v1
+        let rollback_svc = make_rollback_service(versions.clone());
+        let result = rollback_svc
+            .rollback(&RuleRollbackRequest {
+                tenant_id,
+                target_version_id: v1_id,
+                reason: "v2 caused production failures".into(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.active_version, v1_id);
+
+        // Verify v1 is now active
+        let active = versions.get_active(tenant_id).await.unwrap().unwrap();
+        assert_eq!(active.id, v1_id);
+    }
+
+    #[tokio::test]
+    async fn rollback_rejects_nonexistent_version() {
+        let versions = Arc::new(MockVersionRepo::new());
+        let rollback_svc = make_rollback_service(versions);
+
+        let result = rollback_svc
+            .rollback(&RuleRollbackRequest {
+                tenant_id: TenantId::new(),
+                target_version_id: uuid::Uuid::new_v4(),
+                reason: "some reason for testing".into(),
+            })
+            .await;
+
+        assert!(matches!(result, Err(PrismError::NotFound { .. })));
+    }
+
+    #[tokio::test]
+    async fn rollback_rejects_already_active_version() {
+        let versions = Arc::new(MockVersionRepo::new());
+        let decision_repo = Arc::new(MockDecisionRepo::with_decisions(vec![]));
+        let audit_repo = Arc::new(MockAuditRepo);
+        let audit = AuditLogger::new(audit_repo);
+        let pub_svc = RulePublicationService::new(versions.clone(), decision_repo, audit);
+
+        let tenant_id = TenantId::new();
+        let v1_id = publish_version(&pub_svc, tenant_id, "v1").await;
+
+        let rollback_svc = make_rollback_service(versions);
+        let result = rollback_svc
+            .rollback(&RuleRollbackRequest {
+                tenant_id,
+                target_version_id: v1_id,
+                reason: "rollback to current".into(),
+            })
+            .await;
+
+        assert!(matches!(result, Err(PrismError::Validation { .. })));
+    }
+
+    #[tokio::test]
+    async fn rollback_rejects_empty_reason() {
+        let versions = Arc::new(MockVersionRepo::new());
+        let rollback_svc = make_rollback_service(versions);
+
+        let result = rollback_svc
+            .rollback(&RuleRollbackRequest {
+                tenant_id: TenantId::new(),
+                target_version_id: uuid::Uuid::new_v4(),
+                reason: "  ".into(),
+            })
+            .await;
+
+        assert!(matches!(result, Err(PrismError::Validation { .. })));
+    }
+
+    // -- SR_GOV_22 Export Tests ------------------------------------------------
+
+    #[tokio::test]
+    async fn export_json_lines() {
+        let versions = Arc::new(MockVersionRepo::new());
+        let decision_repo = Arc::new(MockDecisionRepo::with_decisions(vec![]));
+        let audit_repo = Arc::new(MockAuditRepo);
+        let audit = AuditLogger::new(audit_repo);
+        let pub_svc = RulePublicationService::new(versions.clone(), decision_repo, audit);
+
+        let tenant_id = TenantId::new();
+        publish_version(&pub_svc, tenant_id, "v1").await;
+
+        let export_svc = make_export_service(versions);
+        let result = export_svc
+            .export(&RuleExportRequest {
+                tenant_id,
+                as_of_date: chrono::Utc::now(),
+                format: ExportFormat::JsonLines,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.rule_count, 1);
+        assert!(!result.signature.is_empty());
+        let payload_str = String::from_utf8(result.export_payload).unwrap();
+        assert!(payload_str.contains("rule_v1"));
+    }
+
+    #[tokio::test]
+    async fn export_csv_format() {
+        let versions = Arc::new(MockVersionRepo::new());
+        let decision_repo = Arc::new(MockDecisionRepo::with_decisions(vec![]));
+        let audit_repo = Arc::new(MockAuditRepo);
+        let audit = AuditLogger::new(audit_repo);
+        let pub_svc = RulePublicationService::new(versions.clone(), decision_repo, audit);
+
+        let tenant_id = TenantId::new();
+        publish_version(&pub_svc, tenant_id, "v1").await;
+
+        let export_svc = make_export_service(versions);
+        let result = export_svc
+            .export(&RuleExportRequest {
+                tenant_id,
+                as_of_date: chrono::Utc::now(),
+                format: ExportFormat::Csv,
+            })
+            .await
+            .unwrap();
+
+        let payload_str = String::from_utf8(result.export_payload).unwrap();
+        assert!(payload_str.starts_with("name,rule_class,action_pattern,is_active"));
+        assert!(payload_str.contains("rule_v1"));
+    }
+
+    #[tokio::test]
+    async fn export_pdf_format() {
+        let versions = Arc::new(MockVersionRepo::new());
+        let decision_repo = Arc::new(MockDecisionRepo::with_decisions(vec![]));
+        let audit_repo = Arc::new(MockAuditRepo);
+        let audit = AuditLogger::new(audit_repo);
+        let pub_svc = RulePublicationService::new(versions.clone(), decision_repo, audit);
+
+        let tenant_id = TenantId::new();
+        publish_version(&pub_svc, tenant_id, "v1").await;
+
+        let export_svc = make_export_service(versions);
+        let result = export_svc
+            .export(&RuleExportRequest {
+                tenant_id,
+                as_of_date: chrono::Utc::now(),
+                format: ExportFormat::Pdf,
+            })
+            .await
+            .unwrap();
+
+        let payload_str = String::from_utf8(result.export_payload).unwrap();
+        assert!(payload_str.contains("version_number"));
+    }
+
+    #[tokio::test]
+    async fn export_rejects_no_active_version() {
+        let versions = Arc::new(MockVersionRepo::new());
+        let export_svc = make_export_service(versions);
+
+        let result = export_svc
+            .export(&RuleExportRequest {
+                tenant_id: TenantId::new(),
+                as_of_date: chrono::Utc::now(),
+                format: ExportFormat::JsonLines,
+            })
+            .await;
+
+        assert!(matches!(result, Err(PrismError::Validation { .. })));
+    }
+
+    #[tokio::test]
+    async fn export_signature_is_deterministic() {
+        let versions = Arc::new(MockVersionRepo::new());
+        let decision_repo = Arc::new(MockDecisionRepo::with_decisions(vec![]));
+        let audit_repo = Arc::new(MockAuditRepo);
+        let audit = AuditLogger::new(audit_repo);
+        let pub_svc = RulePublicationService::new(versions.clone(), decision_repo, audit);
+
+        let tenant_id = TenantId::new();
+        publish_version(&pub_svc, tenant_id, "v1").await;
+
+        let export_svc = make_export_service(versions);
+        let as_of = chrono::Utc::now();
+
+        let r1 = export_svc
+            .export(&RuleExportRequest {
+                tenant_id,
+                as_of_date: as_of,
+                format: ExportFormat::JsonLines,
+            })
+            .await
+            .unwrap();
+
+        let r2 = export_svc
+            .export(&RuleExportRequest {
+                tenant_id,
+                as_of_date: as_of,
+                format: ExportFormat::JsonLines,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(r1.signature, r2.signature);
     }
 }

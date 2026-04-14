@@ -517,6 +517,102 @@ pub struct RuleExportResult {
     pub rule_count: usize,
 }
 
+// -- Query analytics requests (SR_GOV_37-40) --------------------------------
+
+/// A query analytics event to be captured.
+/// Privacy-level determines which fields are retained.
+/// Implements: SR_GOV_37
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryAnalyticsEvent {
+    pub tenant_id: TenantId,
+    pub query_id: uuid::Uuid,
+    /// Hashed representation of query type (preserves privacy).
+    pub query_type_hash: String,
+    pub complexity_tier: ComplexityTier,
+    /// The model used to process the query.
+    pub model_used: String,
+    pub response_time_ms: u64,
+    pub outcome: QueryOutcome,
+    pub privacy_level: PrivacyLevel,
+    /// The user who submitted the query (stripped at Anonymous level).
+    pub user_id: Option<UserId>,
+    /// The user's role (stripped at Anonymous level, retained at Role level).
+    pub role: Option<String>,
+    /// The user's department (stripped at Anonymous level, retained at Role level).
+    pub department: Option<String>,
+}
+
+/// Result of capturing a query analytics event.
+/// Implements: SR_GOV_37
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnalyticsCaptureResult {
+    pub recorded: bool,
+    /// Privacy level applied to the stored record.
+    pub privacy_level_applied: PrivacyLevel,
+}
+
+/// Request to aggregate query analytics.
+/// Implements: SR_GOV_38
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AggregationRequest {
+    pub tenant_id: TenantId,
+    /// Aggregation period label (e.g., "2026-04-14T10:00:00Z/PT1H").
+    pub period: String,
+}
+
+/// Result of an aggregation run.
+/// Implements: SR_GOV_38
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AggregationResult {
+    pub rows_processed: u64,
+    pub aggregates_written: u64,
+}
+
+/// Request to check analytics access.
+/// Implements: SR_GOV_39
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnalyticsAccessRequest {
+    pub tenant_id: TenantId,
+    /// The principal requesting access.
+    pub principal_id: UserId,
+    /// The principal's roles.
+    pub principal_roles: Vec<String>,
+    /// Scope of data being requested.
+    pub requested_scope: AnalyticsScope,
+    /// If individual scope, the subject user whose data is requested.
+    pub requested_subject: Option<UserId>,
+}
+
+/// Result of an analytics access check.
+/// Implements: SR_GOV_39
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnalyticsAccessResult {
+    pub decision: AccessDecision,
+    pub reason: Option<String>,
+}
+
+/// Request to export query analytics.
+/// Implements: SR_GOV_40
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnalyticsExportRequest {
+    pub tenant_id: TenantId,
+    pub period: String,
+    pub scope: AnalyticsScope,
+    pub format: ExportFormat,
+    /// The principal requesting the export (for access control).
+    pub principal_id: UserId,
+    pub principal_roles: Vec<String>,
+}
+
+/// Result of an analytics export.
+/// Implements: SR_GOV_40
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnalyticsExportResult {
+    pub export_payload: Vec<u8>,
+    pub signature: String,
+    pub event_count: u64,
+}
+
 // -- Lifecycle requests (FOUND S 1.5.1) -------------------------------------
 
 /// A validated state transition produced by the lifecycle state machine.

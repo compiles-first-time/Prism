@@ -265,6 +265,55 @@ pub enum AlertChannel {
     Digest,
 }
 
+/// Privacy level for query analytics (D-17).
+/// Determines what identifying information is retained.
+/// Implements: SR_GOV_37
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrivacyLevel {
+    /// Fully anonymized -- no identifying information retained.
+    Anonymous,
+    /// Role-level -- individual identity stripped, role/department retained.
+    Role,
+    /// Individual-level -- full identity retained (restricted access).
+    Individual,
+}
+
+/// Scope of analytics access or export.
+/// Implements: SR_GOV_39
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnalyticsScope {
+    /// Anonymous aggregate data -- visible to anyone.
+    Anonymous,
+    /// Role-level data -- visible to department heads and C-suite.
+    RoleBased,
+    /// Individual-level data -- visible only to self and designated admin.
+    Individual,
+}
+
+/// Complexity tier for query classification.
+/// Implements: SR_GOV_37
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ComplexityTier {
+    Simple,
+    Moderate,
+    Complex,
+    Expert,
+}
+
+/// Query outcome for analytics.
+/// Implements: SR_GOV_37
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum QueryOutcome {
+    Success,
+    Partial,
+    Failed,
+    Blocked,
+}
+
 /// Source layer that produced a governance event (SR_GOV_47).
 /// Maps to the architectural layers in the PRISM spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

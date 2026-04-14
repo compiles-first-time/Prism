@@ -9,6 +9,7 @@ pub mod liability;
 pub mod meta_policy;
 pub mod pg_tenant_repo;
 pub mod project;
+pub mod query_analytics;
 pub mod rule_engine;
 pub mod rule_versioning;
 pub mod shared_services;
