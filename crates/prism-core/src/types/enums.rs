@@ -364,6 +364,32 @@ pub enum UiVisibility {
     ReadOnly,
 }
 
+/// Decision for a connection pull preflight check.
+/// Implements: SR_GOV_76
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PullPreflightDecision {
+    /// All checks passed -- pull is allowed.
+    Allow,
+    /// A hard requirement is not met -- pull is denied.
+    Deny,
+    /// A soft constraint (e.g. budget) prevents immediate pull -- retry later.
+    Defer,
+}
+
+/// Decision recorded by an approver in an approval chain.
+/// Implements: SR_GOV_43
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalDecision {
+    /// The approver approves the request.
+    Approve,
+    /// The approver rejects the request.
+    Reject,
+    /// The approver defers the decision.
+    Defer,
+}
+
 /// Source layer that produced a governance event (SR_GOV_47).
 /// Maps to the architectural layers in the PRISM spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

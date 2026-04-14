@@ -4,6 +4,70 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-14 -- Day 15 (Week 3): Governance hooks complete + LCA approval chains
+
+### Implemented
+- SR_GOV_76 ConnectionPullPreflightService: connection layer governance gate
+  - Checks: connection approved, credential in CaaS, rate limit budget available
+  - PullPreflightDecision: Allow/Deny/Defer (defer when budget exceeded)
+  - ConnectionStatusRepository + QuotaEnforcer traits
+  - Audit event on DENY/DEFER: `connection.pull_preflight`
+  - 4 new tests
+- SR_GOV_77 QueryRewriteService: Intelligence Layer tenant isolation
+  - Injects `WHERE tenant_id = '{id}'` constraint into every query
+  - Rejects forbidden constructs: DROP, DELETE, DETACH DELETE, MERGE, CALL dbms., CALL db.
+  - Case-insensitive checking
+  - 4 new tests
+- SR_GOV_78 ComponentPreflightService: component execution gate
+  - Checks: component exists, is_active, not deprecated, principal has required role, credential available
+  - ComponentRegistry trait, ComponentInfo entity
+  - 4 new tests
+- SR_GOV_41 ApprovalChainService.create_request(): centralized approval request creation
+  - Computes approval chain via LCA (SR_GOV_42)
+  - SLA tiers: default 5 days, urgent 24 hours, critical 4 hours
+  - ApprovalRequestRepository trait, ApprovalRequestRecord entity
+  - Audit event: `approval.request_created`
+  - 3 new tests
+- SR_GOV_42 LcaComputer.compute(): Lowest Common Ancestor approval chain algorithm
+  - Pure async function traversing org-tree ancestor chains
+  - Finds first person appearing in ALL ancestor chains (the LCA)
+  - Fallback: union of first-level managers when no common ancestor exists
+  - OrgTreeRepository trait
+  - 4 new tests: single principal, two principals LCA, no common ancestor fallback, empty
+- SR_GOV_43 ApprovalChainService.record_decision(): step-by-step chain execution
+  - Approve: advances to next approver (or marks APPROVED if last)
+  - Reject: terminates entire chain as REJECTED
+  - Defer: marks as DEFERRED for later resumption
+  - Validates current approver and valid request status
+  - ApprovalDecision enum, ApprovalChainResult type
+  - Audit event: `approval.decision_recorded`
+  - 4 new tests
+
+### Design Decisions
+- LCA algorithm is simplified for MVP: uses ancestor chain intersection (full DRPRR deferred to Neo4j integration)
+- Forbidden query constructs are checked via case-insensitive substring match; full Cypher parser deferred
+- Component credential check is a boolean flag on ComponentInfo; CaaS integration deferred
+- SLA tiers are hardcoded strings ("urgent", "critical"); per-tenant customization deferred to config
+- Approval chain advances synchronously; async notification dispatch deferred to event bus integration
+
+### Files Changed
+- `crates/prism-core/src/types/enums.rs` -- added PullPreflightDecision, ApprovalDecision
+- `crates/prism-core/src/types/entities.rs` -- added ApprovalRequestRecord, ComponentInfo
+- `crates/prism-core/src/types/requests.rs` -- added 10 request/result types
+- `crates/prism-core/src/repository.rs` -- added 5 repository/trait definitions
+- `crates/prism-governance/src/governance_hooks.rs` -- added SR_GOV_76-78 + 12 tests
+- `crates/prism-governance/src/approval_chain.rs` -- new file, LCA + approval chain + 11 tests
+- `crates/prism-governance/src/lib.rs` -- registered approval_chain module
+
+### Test Summary
+- 23 new tests
+- 250 total workspace tests, all passing
+- All quality gates green: fmt, clippy, test, check
+- **Governance integration points COMPLETE** (SR_GOV_73-78, all 6 done)
+- **LCA approval chain core DONE** (SR_GOV_41-43); delegation (44) and escalation (45) remain
+
+---
+
 ## Session 2026-04-14 -- Day 14 (Week 3): Complete CSA engine + governance integration points
 
 ### Implemented

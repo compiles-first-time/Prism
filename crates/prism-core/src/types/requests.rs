@@ -1002,6 +1002,105 @@ pub struct UiVisibilityResult {
     pub decision: super::enums::UiVisibility,
 }
 
+// -- Connection Pull Preflight requests (SR_GOV_76) --------------------------
+
+/// Input for a connection pull preflight check.
+/// Implements: SR_GOV_76
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionPullPreflight {
+    pub tenant_id: TenantId,
+    pub connection_id: String,
+    pub scope: String,
+    pub expected_volume: u64,
+}
+
+/// Result of a connection pull preflight check.
+/// Implements: SR_GOV_76
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionPullPreflightResult {
+    pub decision: super::enums::PullPreflightDecision,
+    pub defer_reason: Option<String>,
+}
+
+// -- Query Rewrite requests (SR_GOV_77) --------------------------------------
+
+/// Input for an intelligence query rewrite.
+/// Implements: SR_GOV_77
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryRewriteInput {
+    pub tenant_id: TenantId,
+    pub principal_id: UserId,
+    pub principal_roles: Vec<String>,
+    pub raw_query: String,
+}
+
+/// Result of a query rewrite.
+/// Implements: SR_GOV_77
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryRewriteResult {
+    pub rewritten_query: String,
+    pub applied_filters: Vec<String>,
+}
+
+// -- Component Execution Preflight requests (SR_GOV_78) ----------------------
+
+/// Input for a component execution preflight check.
+/// Implements: SR_GOV_78
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentExecutionPreflight {
+    pub tenant_id: TenantId,
+    pub principal_id: UserId,
+    pub principal_roles: Vec<String>,
+    pub component_id: String,
+    pub args: serde_json::Value,
+}
+
+/// Result of a component execution preflight check.
+/// Implements: SR_GOV_78
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentExecutionPreflightResult {
+    pub decision: super::enums::AccessDecision,
+}
+
+// -- Approval chain requests (SR_GOV_41, SR_GOV_43) --------------------------
+
+/// Request to create an approval request.
+/// Implements: SR_GOV_41
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalCreateRequest {
+    pub tenant_id: TenantId,
+    pub action: String,
+    pub requested_by: UserId,
+    pub payload: serde_json::Value,
+    pub sla_tier: Option<String>,
+}
+
+/// Result of creating an approval request.
+/// Implements: SR_GOV_41
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalRequestResult {
+    pub approval_id: uuid::Uuid,
+    pub approvers: Vec<UserId>,
+    pub sla_deadline: DateTime<Utc>,
+}
+
+/// Input for recording an approver's decision in an approval chain.
+/// Implements: SR_GOV_43
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalChainExecution {
+    pub approval_id: uuid::Uuid,
+    pub approver_id: UserId,
+    pub decision: super::enums::ApprovalDecision,
+}
+
+/// Result of executing an approval chain step.
+/// Implements: SR_GOV_43
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalChainResult {
+    pub final_state: ApprovalStatus,
+    pub decisions: Vec<(UserId, super::enums::ApprovalDecision)>,
+}
+
 // -- Lifecycle requests (FOUND S 1.5.1) -------------------------------------
 
 /// A validated state transition produced by the lifecycle state machine.

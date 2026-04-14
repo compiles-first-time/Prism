@@ -12,9 +12,9 @@
 | SR_GOV_16 | ENFORCE rule evaluation | **Done** | prism-governance | rule_engine.rs | 7 unit | Week 2 Day 8 |
 | SR_GOV_17 | ADVISE rule evaluation | **Done** | prism-governance | rule_engine.rs | 4 unit | Week 2 Day 8 |
 | SR_GOV_18 | ADVISE override justification | **Done** | prism-governance | rule_engine.rs | 13 unit | Week 2 Day 9 |
-| SR_GOV_41 | Create approval request | Deferred | prism-governance | lca.rs | -- | Needs LCA |
-| SR_GOV_42 | Compute LCA chain | Deferred | prism-governance | lca.rs | -- | Week 3+ |
-| SR_GOV_43 | Execute approval chain | Deferred | prism-governance | lca.rs | -- | Week 3+ |
+| SR_GOV_41 | Create approval request | **Done** | prism-governance | approval_chain.rs | 3 unit | Week 3 Day 15 |
+| SR_GOV_42 | Compute LCA chain | **Done** | prism-governance | approval_chain.rs | 4 unit | Week 3 Day 15 |
+| SR_GOV_43 | Execute approval chain | **Done** | prism-governance | approval_chain.rs | 4 unit | Week 3 Day 15 |
 | SR_GOV_44 | Delegation (DEF) | Deferred | prism-governance | def.rs | -- | Week 3+ |
 | SR_GOV_45 | SLA escalation | Deferred | prism-governance | def.rs | -- | Week 3+ |
 | SR_GOV_47 | Audit event writing | **Done** | prism-audit | event_store.rs | 5 unit | Day 2 |
@@ -54,6 +54,9 @@
 | SR_GOV_73 | LLM Router Stage 1 | **Done** | prism-governance | governance_hooks.rs | 3 unit | Week 3 Day 14 |
 | SR_GOV_74 | DS preflight | **Done** | prism-governance | governance_hooks.rs | 3 unit | Week 3 Day 14 |
 | SR_GOV_75 | UI visibility check | **Done** | prism-governance | governance_hooks.rs | 3 unit | Week 3 Day 14 |
+| SR_GOV_76 | Connection pull preflight | **Done** | prism-governance | governance_hooks.rs | 4 unit | Week 3 Day 15 |
+| SR_GOV_77 | Query rewrite | **Done** | prism-governance | governance_hooks.rs | 4 unit | Week 3 Day 15 |
+| SR_GOV_78 | Component preflight | **Done** | prism-governance | governance_hooks.rs | 4 unit | Week 3 Day 15 |
 | SR_GOV_52 | Crypto-shredding | Deferred | prism-compliance | crypto_shredding.rs | -- | Week 3+ (needs CaaS) |
 | SR_DM_01 | Tenant node creation | **Done** | prism-governance | pg_tenant_repo.rs | -- | Day 3 (PG only; Neo4j Week 2) |
 | SR_DM_02 | Person node creation | **Done** | prism-identity | pg_repository.rs | -- | Day 4 (PG only) |

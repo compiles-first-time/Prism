@@ -302,3 +302,35 @@ pub struct ApprovalChain {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
+
+// -- Approval Request Record (SR_GOV_41) ------------------------------------
+
+/// A persisted approval request with ordered approver chain and SLA tracking.
+/// Implements: SR_GOV_41
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalRequestRecord {
+    pub id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    pub action: String,
+    pub requested_by: UserId,
+    pub payload: serde_json::Value,
+    pub approvers: Vec<UserId>,
+    pub current_index: usize,
+    pub status: ApprovalStatus,
+    pub sla_deadline: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+// -- Component Info (SR_GOV_78) ---------------------------------------------
+
+/// Metadata about a registered component for preflight checks.
+/// Implements: SR_GOV_78
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentInfo {
+    pub component_id: String,
+    pub is_active: bool,
+    pub is_deprecated: bool,
+    pub required_role: Option<String>,
+    pub credential_required: bool,
+    pub has_credential: bool,
+}

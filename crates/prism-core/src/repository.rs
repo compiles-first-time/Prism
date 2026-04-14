@@ -288,6 +288,103 @@ pub trait CsaAssessmentRepository: Send + Sync {
     async fn persist(&self, record: &crate::types::CsaAssessmentRecord) -> Result<(), PrismError>;
 }
 
+// -- Connection Status Repository (SR_GOV_76) --------------------------------
+
+/// Persistence operations for checking connection approval and credential status.
+/// Implements: SR_GOV_76
+#[async_trait]
+pub trait ConnectionStatusRepository: Send + Sync {
+    /// Check whether a connection is approved for a tenant.
+    /// Implements: SR_GOV_76
+    async fn is_approved(
+        &self,
+        tenant_id: TenantId,
+        connection_id: &str,
+    ) -> Result<bool, PrismError>;
+
+    /// Check whether a connection has a valid credential.
+    /// Implements: SR_GOV_76
+    async fn has_credential(
+        &self,
+        tenant_id: TenantId,
+        connection_id: &str,
+    ) -> Result<bool, PrismError>;
+}
+
+// -- Quota Enforcer (SR_GOV_76) -----------------------------------------------
+
+/// Budget and quota enforcement for connection pulls.
+/// Implements: SR_GOV_76
+#[async_trait]
+pub trait QuotaEnforcer: Send + Sync {
+    /// Check whether the expected volume is within the budget for this connection.
+    /// Returns Ok(true) if within budget, Ok(false) if budget exceeded.
+    /// Implements: SR_GOV_76
+    async fn check_budget(
+        &self,
+        tenant_id: TenantId,
+        connection_id: &str,
+        expected_volume: u64,
+    ) -> Result<bool, PrismError>;
+}
+
+// -- Component Registry (SR_GOV_78) -------------------------------------------
+
+/// Registry for looking up component metadata during preflight checks.
+/// Implements: SR_GOV_78
+#[async_trait]
+pub trait ComponentRegistry: Send + Sync {
+    /// Get component metadata by tenant and component ID.
+    /// Returns None if the component does not exist.
+    /// Implements: SR_GOV_78
+    async fn get_component(
+        &self,
+        tenant_id: TenantId,
+        component_id: &str,
+    ) -> Result<Option<ComponentInfo>, PrismError>;
+}
+
+// -- Org Tree Repository (SR_GOV_42) ------------------------------------------
+
+/// Persistence operations for the organizational tree (reporting chains).
+/// Used by the LCA algorithm to compute approval chains.
+/// Implements: SR_GOV_42
+#[async_trait]
+pub trait OrgTreeRepository: Send + Sync {
+    /// Get the reporting chain ancestors for a person up to the root.
+    /// Returns an ordered list from direct manager up to the org root.
+    /// Implements: SR_GOV_42
+    async fn get_ancestors(
+        &self,
+        tenant_id: TenantId,
+        person_id: UserId,
+    ) -> Result<Vec<UserId>, PrismError>;
+}
+
+// -- Approval Request Repository (SR_GOV_41) ----------------------------------
+
+/// Persistence operations for approval requests.
+/// Implements: SR_GOV_41
+#[async_trait]
+pub trait ApprovalRequestRepository: Send + Sync {
+    /// Create a new approval request record.
+    /// Implements: SR_GOV_41
+    async fn create(&self, request: &ApprovalRequestRecord) -> Result<(), PrismError>;
+
+    /// Get an approval request by ID.
+    /// Implements: SR_GOV_41
+    async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<ApprovalRequestRecord>, PrismError>;
+
+    /// Update the status and current_index of an approval request.
+    /// Implements: SR_GOV_43
+    async fn update_status(
+        &self,
+        id: uuid::Uuid,
+        status: ApprovalStatus,
+        current_index: usize,
+    ) -> Result<(), PrismError>;
+}
+
 // -- Audit Event Repository (SR_DM_05) --------------------------------------
 
 /// Persistence operations for the append-only audit event store.

@@ -1,5 +1,6 @@
 pub mod admin_undo;
 pub mod alert_routing;
+pub mod approval_chain;
 pub mod audit_path;
 pub mod break_glass;
 pub mod committee;

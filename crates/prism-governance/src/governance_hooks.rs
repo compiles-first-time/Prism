@@ -11,7 +11,9 @@ use tracing::info;
 
 use prism_audit::event_store::AuditLogger;
 use prism_core::error::PrismError;
-use prism_core::repository::GovernanceRuleRepository;
+use prism_core::repository::{
+    ComponentRegistry, ConnectionStatusRepository, GovernanceRuleRepository, QuotaEnforcer,
+};
 use prism_core::types::*;
 
 // ===========================================================================
@@ -227,6 +229,260 @@ impl UiVisibilityService {
         };
 
         UiVisibilityResult { decision }
+    }
+}
+
+// ===========================================================================
+// SR_GOV_76 -- Connection Pull Preflight
+// ===========================================================================
+
+/// Service that performs preflight checks before a data pull from an
+/// external connection.
+///
+/// Checks: connection approval, credential presence, and budget quota.
+/// DENY if not approved or no credential; DEFER if budget exceeded;
+/// ALLOW otherwise.
+///
+/// Implements: SR_GOV_76
+pub struct ConnectionPullPreflightService {
+    conn_status: Arc<dyn ConnectionStatusRepository>,
+    quota: Arc<dyn QuotaEnforcer>,
+    audit: AuditLogger,
+}
+
+impl ConnectionPullPreflightService {
+    /// Create a new connection pull preflight service.
+    pub fn new(
+        conn_status: Arc<dyn ConnectionStatusRepository>,
+        quota: Arc<dyn QuotaEnforcer>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self {
+            conn_status,
+            quota,
+            audit,
+        }
+    }
+
+    /// Check whether a connection pull is allowed.
+    ///
+    /// - DENY if the connection is not approved.
+    /// - DENY if the connection has no credential.
+    /// - DEFER if the budget would be exceeded.
+    /// - ALLOW otherwise.
+    ///
+    /// Implements: SR_GOV_76
+    pub async fn check(
+        &self,
+        input: &ConnectionPullPreflight,
+    ) -> Result<ConnectionPullPreflightResult, PrismError> {
+        // Check approval
+        let approved = self
+            .conn_status
+            .is_approved(input.tenant_id, &input.connection_id)
+            .await?;
+        if !approved {
+            self.audit_deny_or_defer(
+                input,
+                PullPreflightDecision::Deny,
+                "connection not approved",
+            )
+            .await?;
+            return Ok(ConnectionPullPreflightResult {
+                decision: PullPreflightDecision::Deny,
+                defer_reason: None,
+            });
+        }
+
+        // Check credential
+        let has_cred = self
+            .conn_status
+            .has_credential(input.tenant_id, &input.connection_id)
+            .await?;
+        if !has_cred {
+            self.audit_deny_or_defer(
+                input,
+                PullPreflightDecision::Deny,
+                "no credential for connection",
+            )
+            .await?;
+            return Ok(ConnectionPullPreflightResult {
+                decision: PullPreflightDecision::Deny,
+                defer_reason: None,
+            });
+        }
+
+        // Check budget
+        let within_budget = self
+            .quota
+            .check_budget(input.tenant_id, &input.connection_id, input.expected_volume)
+            .await?;
+        if !within_budget {
+            let reason = "budget exceeded for expected volume".to_string();
+            self.audit_deny_or_defer(input, PullPreflightDecision::Defer, &reason)
+                .await?;
+            return Ok(ConnectionPullPreflightResult {
+                decision: PullPreflightDecision::Defer,
+                defer_reason: Some(reason),
+            });
+        }
+
+        Ok(ConnectionPullPreflightResult {
+            decision: PullPreflightDecision::Allow,
+            defer_reason: None,
+        })
+    }
+
+    /// Emit an audit event for DENY or DEFER decisions.
+    ///
+    /// Implements: SR_GOV_76
+    async fn audit_deny_or_defer(
+        &self,
+        input: &ConnectionPullPreflight,
+        decision: PullPreflightDecision,
+        reason: &str,
+    ) -> Result<(), PrismError> {
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "connection.pull_preflight".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("Connection".into()),
+                severity: Severity::Medium,
+                source_layer: SourceLayer::Connection,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "connection_id": input.connection_id,
+                    "decision": format!("{:?}", decision),
+                    "reason": reason,
+                }),
+            })
+            .await?;
+        Ok(())
+    }
+}
+
+// ===========================================================================
+// SR_GOV_77 -- Intelligence Query Rewrite
+// ===========================================================================
+
+/// Forbidden SQL/Cypher constructs that must not appear in intelligence queries.
+const FORBIDDEN_CONSTRUCTS: &[&str] = &[
+    "DROP ",
+    "DELETE ",
+    "DETACH DELETE",
+    "MERGE",
+    "CALL dbms.",
+    "CALL db.",
+];
+
+/// Service that rewrites intelligence queries to enforce tenant isolation
+/// and blocks forbidden constructs.
+///
+/// Implements: SR_GOV_77
+pub struct QueryRewriteService;
+
+impl QueryRewriteService {
+    /// Rewrite a raw intelligence query.
+    ///
+    /// - Rejects queries containing forbidden constructs (DROP, DELETE, etc.).
+    /// - Injects a `WHERE tenant_id = '<tenant_id>'` constraint.
+    ///
+    /// Implements: SR_GOV_77
+    pub fn rewrite(input: &QueryRewriteInput) -> Result<QueryRewriteResult, PrismError> {
+        let upper = input.raw_query.to_uppercase();
+
+        for construct in FORBIDDEN_CONSTRUCTS {
+            if upper.contains(&construct.to_uppercase()) {
+                return Err(PrismError::Validation {
+                    reason: format!("query contains forbidden construct: {}", construct.trim()),
+                });
+            }
+        }
+
+        let tenant_filter = format!("WHERE tenant_id = '{}'", input.tenant_id);
+        let rewritten = format!("{} {}", input.raw_query, tenant_filter);
+        let applied_filters = vec![tenant_filter];
+
+        Ok(QueryRewriteResult {
+            rewritten_query: rewritten,
+            applied_filters,
+        })
+    }
+}
+
+// ===========================================================================
+// SR_GOV_78 -- Component Execution Preflight
+// ===========================================================================
+
+/// Service that performs preflight checks before executing a component.
+///
+/// Checks: component exists, is active, not deprecated, principal has
+/// required role (if any), and credential is available (if required).
+///
+/// Implements: SR_GOV_78
+pub struct ComponentPreflightService {
+    registry: Arc<dyn ComponentRegistry>,
+}
+
+impl ComponentPreflightService {
+    /// Create a new component preflight service.
+    pub fn new(registry: Arc<dyn ComponentRegistry>) -> Self {
+        Self { registry }
+    }
+
+    /// Check whether a component execution is allowed.
+    ///
+    /// - DENY if component not found, not active, deprecated, missing role, or missing credential.
+    /// - ALLOW otherwise.
+    ///
+    /// Implements: SR_GOV_78
+    pub async fn check(
+        &self,
+        input: &ComponentExecutionPreflight,
+    ) -> Result<ComponentExecutionPreflightResult, PrismError> {
+        let component = self
+            .registry
+            .get_component(input.tenant_id, &input.component_id)
+            .await?;
+
+        let Some(comp) = component else {
+            return Ok(ComponentExecutionPreflightResult {
+                decision: AccessDecision::Deny,
+            });
+        };
+
+        if !comp.is_active {
+            return Ok(ComponentExecutionPreflightResult {
+                decision: AccessDecision::Deny,
+            });
+        }
+
+        if comp.is_deprecated {
+            return Ok(ComponentExecutionPreflightResult {
+                decision: AccessDecision::Deny,
+            });
+        }
+
+        if let Some(ref required_role) = comp.required_role {
+            if !input.principal_roles.iter().any(|r| r == required_role) {
+                return Ok(ComponentExecutionPreflightResult {
+                    decision: AccessDecision::Deny,
+                });
+            }
+        }
+
+        if comp.credential_required && !comp.has_credential {
+            return Ok(ComponentExecutionPreflightResult {
+                decision: AccessDecision::Deny,
+            });
+        }
+
+        Ok(ComponentExecutionPreflightResult {
+            decision: AccessDecision::Allow,
+        })
     }
 }
 
@@ -524,5 +780,343 @@ mod tests {
 
         let result = UiVisibilityService::check(&input);
         assert_eq!(result.decision, UiVisibility::ReadOnly);
+    }
+
+    // -- Mock ConnectionStatusRepository (SR_GOV_76) ----------------------------
+
+    struct MockConnectionStatus {
+        approved: Mutex<Vec<String>>,
+        has_cred: Mutex<Vec<String>>,
+    }
+
+    impl MockConnectionStatus {
+        fn new(approved: Vec<&str>, has_cred: Vec<&str>) -> Self {
+            Self {
+                approved: Mutex::new(approved.into_iter().map(String::from).collect()),
+                has_cred: Mutex::new(has_cred.into_iter().map(String::from).collect()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl ConnectionStatusRepository for MockConnectionStatus {
+        async fn is_approved(
+            &self,
+            _tenant_id: TenantId,
+            connection_id: &str,
+        ) -> Result<bool, PrismError> {
+            Ok(self
+                .approved
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|c| c == connection_id))
+        }
+
+        async fn has_credential(
+            &self,
+            _tenant_id: TenantId,
+            connection_id: &str,
+        ) -> Result<bool, PrismError> {
+            Ok(self
+                .has_cred
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|c| c == connection_id))
+        }
+    }
+
+    // -- Mock QuotaEnforcer (SR_GOV_76) -----------------------------------------
+
+    struct MockQuota {
+        within_budget: bool,
+    }
+
+    #[async_trait]
+    impl QuotaEnforcer for MockQuota {
+        async fn check_budget(
+            &self,
+            _tenant_id: TenantId,
+            _connection_id: &str,
+            _expected_volume: u64,
+        ) -> Result<bool, PrismError> {
+            Ok(self.within_budget)
+        }
+    }
+
+    // -- SR_GOV_76 Tests: Connection Pull Preflight ------------------------------
+
+    #[tokio::test]
+    async fn pull_preflight_allows_when_all_checks_pass() {
+        let conn_status = Arc::new(MockConnectionStatus::new(vec!["conn_1"], vec!["conn_1"]));
+        let quota = Arc::new(MockQuota {
+            within_budget: true,
+        });
+        let audit = make_audit();
+        let svc = ConnectionPullPreflightService::new(conn_status, quota, audit);
+
+        let input = ConnectionPullPreflight {
+            tenant_id: TenantId::new(),
+            connection_id: "conn_1".into(),
+            scope: "full".into(),
+            expected_volume: 100,
+        };
+
+        let result = svc.check(&input).await.unwrap();
+        assert_eq!(result.decision, PullPreflightDecision::Allow);
+        assert!(result.defer_reason.is_none());
+    }
+
+    #[tokio::test]
+    async fn pull_preflight_denies_when_not_approved() {
+        let conn_status = Arc::new(MockConnectionStatus::new(vec![], vec!["conn_1"]));
+        let quota = Arc::new(MockQuota {
+            within_budget: true,
+        });
+        let audit = make_audit();
+        let svc = ConnectionPullPreflightService::new(conn_status, quota, audit);
+
+        let input = ConnectionPullPreflight {
+            tenant_id: TenantId::new(),
+            connection_id: "conn_1".into(),
+            scope: "full".into(),
+            expected_volume: 100,
+        };
+
+        let result = svc.check(&input).await.unwrap();
+        assert_eq!(result.decision, PullPreflightDecision::Deny);
+    }
+
+    #[tokio::test]
+    async fn pull_preflight_denies_when_no_credential() {
+        let conn_status = Arc::new(MockConnectionStatus::new(vec!["conn_1"], vec![]));
+        let quota = Arc::new(MockQuota {
+            within_budget: true,
+        });
+        let audit = make_audit();
+        let svc = ConnectionPullPreflightService::new(conn_status, quota, audit);
+
+        let input = ConnectionPullPreflight {
+            tenant_id: TenantId::new(),
+            connection_id: "conn_1".into(),
+            scope: "full".into(),
+            expected_volume: 100,
+        };
+
+        let result = svc.check(&input).await.unwrap();
+        assert_eq!(result.decision, PullPreflightDecision::Deny);
+    }
+
+    #[tokio::test]
+    async fn pull_preflight_defers_when_budget_exceeded() {
+        let conn_status = Arc::new(MockConnectionStatus::new(vec!["conn_1"], vec!["conn_1"]));
+        let quota = Arc::new(MockQuota {
+            within_budget: false,
+        });
+        let audit = make_audit();
+        let svc = ConnectionPullPreflightService::new(conn_status, quota, audit);
+
+        let input = ConnectionPullPreflight {
+            tenant_id: TenantId::new(),
+            connection_id: "conn_1".into(),
+            scope: "full".into(),
+            expected_volume: 999_999,
+        };
+
+        let result = svc.check(&input).await.unwrap();
+        assert_eq!(result.decision, PullPreflightDecision::Defer);
+        assert!(result.defer_reason.is_some());
+    }
+
+    // -- SR_GOV_77 Tests: Query Rewrite ------------------------------------------
+
+    #[test]
+    fn query_rewrite_adds_tenant_filter() {
+        let input = QueryRewriteInput {
+            tenant_id: TenantId::new(),
+            principal_id: UserId::new(),
+            principal_roles: vec!["analyst".into()],
+            raw_query: "MATCH (n:Account) RETURN n".into(),
+        };
+
+        let result = QueryRewriteService::rewrite(&input).unwrap();
+        assert!(result.rewritten_query.contains("tenant_id"));
+        assert!(!result.applied_filters.is_empty());
+    }
+
+    #[test]
+    fn query_rewrite_rejects_drop() {
+        let input = QueryRewriteInput {
+            tenant_id: TenantId::new(),
+            principal_id: UserId::new(),
+            principal_roles: vec!["analyst".into()],
+            raw_query: "DROP INDEX my_index".into(),
+        };
+
+        let result = QueryRewriteService::rewrite(&input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn query_rewrite_rejects_delete() {
+        let input = QueryRewriteInput {
+            tenant_id: TenantId::new(),
+            principal_id: UserId::new(),
+            principal_roles: vec!["analyst".into()],
+            raw_query: "MATCH (n) DELETE n".into(),
+        };
+
+        let result = QueryRewriteService::rewrite(&input);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn query_rewrite_passes_clean_query() {
+        let input = QueryRewriteInput {
+            tenant_id: TenantId::new(),
+            principal_id: UserId::new(),
+            principal_roles: vec!["analyst".into()],
+            raw_query: "MATCH (n:Transaction) RETURN n LIMIT 10".into(),
+        };
+
+        let result = QueryRewriteService::rewrite(&input).unwrap();
+        assert!(result.rewritten_query.contains("tenant_id"));
+        assert_eq!(result.applied_filters.len(), 1);
+    }
+
+    // -- Mock ComponentRegistry (SR_GOV_78) --------------------------------------
+
+    struct MockComponentRegistry {
+        components: Mutex<Vec<ComponentInfo>>,
+    }
+
+    impl MockComponentRegistry {
+        fn new() -> Self {
+            Self {
+                components: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn add(&self, info: ComponentInfo) {
+            self.components.lock().unwrap().push(info);
+        }
+    }
+
+    #[async_trait]
+    impl ComponentRegistry for MockComponentRegistry {
+        async fn get_component(
+            &self,
+            _tenant_id: TenantId,
+            component_id: &str,
+        ) -> Result<Option<ComponentInfo>, PrismError> {
+            let components = self.components.lock().unwrap();
+            Ok(components
+                .iter()
+                .find(|c| c.component_id == component_id)
+                .cloned())
+        }
+    }
+
+    // -- SR_GOV_78 Tests: Component Execution Preflight ---------------------------
+
+    #[tokio::test]
+    async fn component_preflight_allows_when_all_checks_pass() {
+        let registry = Arc::new(MockComponentRegistry::new());
+        registry.add(ComponentInfo {
+            component_id: "comp_1".into(),
+            is_active: true,
+            is_deprecated: false,
+            required_role: Some("operator".into()),
+            credential_required: false,
+            has_credential: false,
+        });
+        let svc = ComponentPreflightService::new(registry);
+
+        let input = ComponentExecutionPreflight {
+            tenant_id: TenantId::new(),
+            principal_id: UserId::new(),
+            principal_roles: vec!["operator".into()],
+            component_id: "comp_1".into(),
+            args: serde_json::json!({}),
+        };
+
+        let result = svc.check(&input).await.unwrap();
+        assert_eq!(result.decision, AccessDecision::Allow);
+    }
+
+    #[tokio::test]
+    async fn component_preflight_denies_when_inactive() {
+        let registry = Arc::new(MockComponentRegistry::new());
+        registry.add(ComponentInfo {
+            component_id: "comp_1".into(),
+            is_active: false,
+            is_deprecated: false,
+            required_role: None,
+            credential_required: false,
+            has_credential: false,
+        });
+        let svc = ComponentPreflightService::new(registry);
+
+        let input = ComponentExecutionPreflight {
+            tenant_id: TenantId::new(),
+            principal_id: UserId::new(),
+            principal_roles: vec!["operator".into()],
+            component_id: "comp_1".into(),
+            args: serde_json::json!({}),
+        };
+
+        let result = svc.check(&input).await.unwrap();
+        assert_eq!(result.decision, AccessDecision::Deny);
+    }
+
+    #[tokio::test]
+    async fn component_preflight_denies_when_deprecated() {
+        let registry = Arc::new(MockComponentRegistry::new());
+        registry.add(ComponentInfo {
+            component_id: "comp_1".into(),
+            is_active: true,
+            is_deprecated: true,
+            required_role: None,
+            credential_required: false,
+            has_credential: false,
+        });
+        let svc = ComponentPreflightService::new(registry);
+
+        let input = ComponentExecutionPreflight {
+            tenant_id: TenantId::new(),
+            principal_id: UserId::new(),
+            principal_roles: vec!["operator".into()],
+            component_id: "comp_1".into(),
+            args: serde_json::json!({}),
+        };
+
+        let result = svc.check(&input).await.unwrap();
+        assert_eq!(result.decision, AccessDecision::Deny);
+    }
+
+    #[tokio::test]
+    async fn component_preflight_denies_when_missing_role() {
+        let registry = Arc::new(MockComponentRegistry::new());
+        registry.add(ComponentInfo {
+            component_id: "comp_1".into(),
+            is_active: true,
+            is_deprecated: false,
+            required_role: Some("admin".into()),
+            credential_required: false,
+            has_credential: false,
+        });
+        let svc = ComponentPreflightService::new(registry);
+
+        let input = ComponentExecutionPreflight {
+            tenant_id: TenantId::new(),
+            principal_id: UserId::new(),
+            principal_roles: vec!["operator".into()],
+            component_id: "comp_1".into(),
+            args: serde_json::json!({}),
+        };
+
+        let result = svc.check(&input).await.unwrap();
+        assert_eq!(result.decision, AccessDecision::Deny);
     }
 }
