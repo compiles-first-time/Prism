@@ -321,6 +321,23 @@ pub struct ApprovalRequestRecord {
     pub created_at: DateTime<Utc>,
 }
 
+// -- Delegation (SR_GOV_44) ------------------------------------------------
+
+/// An active delegation that re-routes approval authority from one person
+/// to another within a defined scope and time window.
+/// Implements: SR_GOV_44
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Delegation {
+    pub id: uuid::Uuid,
+    pub tenant_id: super::identifiers::TenantId,
+    pub from_person: super::identifiers::UserId,
+    pub to_person: super::identifiers::UserId,
+    pub scope: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub is_active: bool,
+}
+
 // -- Component Info (SR_GOV_78) ---------------------------------------------
 
 /// Metadata about a registered component for preflight checks.

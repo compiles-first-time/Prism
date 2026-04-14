@@ -383,6 +383,49 @@ pub trait ApprovalRequestRepository: Send + Sync {
         status: ApprovalStatus,
         current_index: usize,
     ) -> Result<(), PrismError>;
+
+    /// List pending approval requests where the given approver is the current approver.
+    /// Implements: SR_GOV_44
+    async fn list_pending_for_approver(
+        &self,
+        tenant_id: TenantId,
+        approver_id: UserId,
+    ) -> Result<Vec<ApprovalRequestRecord>, PrismError>;
+
+    /// Replace an approver in the approvers list for a given approval request.
+    /// Implements: SR_GOV_44, SR_GOV_45
+    async fn replace_approver(
+        &self,
+        id: uuid::Uuid,
+        old_approver: UserId,
+        new_approver: UserId,
+    ) -> Result<(), PrismError>;
+}
+
+// -- Delegation Repository (SR_GOV_44) ----------------------------------------
+
+/// Persistence operations for delegation records.
+/// Implements: SR_GOV_44
+#[async_trait]
+pub trait DelegationRepository: Send + Sync {
+    /// Create a new delegation record.
+    /// Implements: SR_GOV_44
+    async fn create(&self, delegation: &crate::types::Delegation) -> Result<(), PrismError>;
+
+    /// Get the currently active delegation for a person within a tenant.
+    /// Implements: SR_GOV_44
+    async fn get_active_delegation(
+        &self,
+        tenant_id: TenantId,
+        from_person: UserId,
+    ) -> Result<Option<crate::types::Delegation>, PrismError>;
+
+    /// List all active delegations for a tenant.
+    /// Implements: SR_GOV_44
+    async fn list_active(
+        &self,
+        tenant_id: TenantId,
+    ) -> Result<Vec<crate::types::Delegation>, PrismError>;
 }
 
 // -- Audit Event Repository (SR_DM_05) --------------------------------------

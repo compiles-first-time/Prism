@@ -15,8 +15,10 @@
 | SR_GOV_41 | Create approval request | **Done** | prism-governance | approval_chain.rs | 3 unit | Week 3 Day 15 |
 | SR_GOV_42 | Compute LCA chain | **Done** | prism-governance | approval_chain.rs | 4 unit | Week 3 Day 15 |
 | SR_GOV_43 | Execute approval chain | **Done** | prism-governance | approval_chain.rs | 4 unit | Week 3 Day 15 |
-| SR_GOV_44 | Delegation (DEF) | Deferred | prism-governance | def.rs | -- | Week 3+ |
-| SR_GOV_45 | SLA escalation | Deferred | prism-governance | def.rs | -- | Week 3+ |
+| SR_GOV_44 | Delegation (DEF) | **Done** | prism-governance | approval_chain.rs | 4 unit | Week 3 Day 16 |
+| SR_GOV_45 | SLA escalation | **Done** | prism-governance | approval_chain.rs | 3 unit | Week 3 Day 16 |
+| SR_GOV_46 | Approval break-glass | **Done** | prism-governance | approval_chain.rs | 4 unit | Week 3 Day 16 |
+| SR_GOV_46_REVIEW | Break-glass review | **Done** | prism-governance | approval_chain.rs | 3 unit | Week 3 Day 16 |
 | SR_GOV_47 | Audit event writing | **Done** | prism-audit | event_store.rs | 5 unit | Day 2 |
 | SR_GOV_48 | Chain verification | **Done** | prism-audit | merkle_chain.rs | 4 unit | Day 2 |
 | SR_GOV_49 | Audit query | **Done** | prism-audit | event_store.rs | 1 unit | Day 2 |

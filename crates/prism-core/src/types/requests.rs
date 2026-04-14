@@ -1101,6 +1101,89 @@ pub struct ApprovalChainResult {
     pub decisions: Vec<(UserId, super::enums::ApprovalDecision)>,
 }
 
+// -- Delegation requests (SR_GOV_44) ----------------------------------------
+
+/// Request to create a delegation from one approver to another.
+/// Implements: SR_GOV_44
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DelegationRequest {
+    pub tenant_id: TenantId,
+    pub from_person: UserId,
+    pub to_person: UserId,
+    pub scope: String,
+    pub expires_at: DateTime<Utc>,
+}
+
+/// Result of creating a delegation.
+/// Implements: SR_GOV_44
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DelegationResult {
+    pub delegation_id: uuid::Uuid,
+    pub affected_approvals: Vec<uuid::Uuid>,
+}
+
+// -- Escalation requests (SR_GOV_45) ----------------------------------------
+
+/// Request to escalate an approval past its SLA deadline.
+/// Implements: SR_GOV_45
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EscalationRequest {
+    pub tenant_id: TenantId,
+    pub approval_id: uuid::Uuid,
+    pub current_approver: UserId,
+    pub new_approver: UserId,
+}
+
+/// Result of an SLA escalation.
+/// Implements: SR_GOV_45
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EscalationResult {
+    pub reassigned_to: UserId,
+    pub new_deadline: DateTime<Utc>,
+}
+
+// -- Approval Break-Glass requests (SR_GOV_46) -------------------------------
+
+/// Request to activate an approval break-glass override.
+/// Requires two-person approval and mandatory post-incident review.
+/// Implements: SR_GOV_46
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalBreakGlassRequest {
+    pub tenant_id: TenantId,
+    pub action: String,
+    pub requested_by: UserId,
+    pub justification: String,
+    pub second_approver: UserId,
+    pub duration_minutes: Option<u64>,
+}
+
+/// Result of an approval break-glass activation.
+/// Implements: SR_GOV_46
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalBreakGlassResult {
+    pub authorized: bool,
+    pub expires_at: DateTime<Utc>,
+    pub review_id: uuid::Uuid,
+}
+
+/// Input for reviewing an approval break-glass activation.
+/// Implements: SR_GOV_46
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalBreakGlassReviewInput {
+    pub tenant_id: TenantId,
+    pub review_id: uuid::Uuid,
+    pub review_decision: super::enums::BreakGlassReviewDecision,
+    pub notes: String,
+}
+
+/// Result of an approval break-glass review.
+/// Implements: SR_GOV_46
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalBreakGlassReviewResult {
+    pub review_decision: super::enums::BreakGlassReviewDecision,
+    pub follow_ups: Vec<String>,
+}
+
 // -- Lifecycle requests (FOUND S 1.5.1) -------------------------------------
 
 /// A validated state transition produced by the lifecycle state machine.
