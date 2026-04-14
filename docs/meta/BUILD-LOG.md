@@ -4,6 +4,29 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-13 -- Day 5: SyncCoordinator stub + quality gates
+
+### Implemented
+- SyncCoordinator (REUSABLE, SR_DM_22): trait + InMemorySyncCoordinator for PG/Neo4j eventual consistency tracking
+- SyncState enum: Consistent, PgOnly, Neo4jOnly, Divergent, Compensating
+- SyncRecord struct with dual-store timestamps and last-checked tracking
+- 5 unit tests covering record creation, state transitions, pending list filtering
+- Added `cargo fmt --check` to build verification pipeline
+- Cross-verification agent confirmed all "Done" items have SR refs and real code
+
+### Design Decisions
+- SyncCoordinator is a trait for testability; InMemorySyncCoordinator for dev, PG-backed impl later
+- PgOnly is the default state for MVP (all writes are PG-only until Neo4j integration)
+- list_pending() enables future backfill worker to detect and sync missing graph nodes
+- Compensating state supports SR_DM_01_SE-01 partial-failure rollback (future)
+
+### Files Changed
+- `crates/prism-graph/src/sync_coordinator.rs` -- new file, trait + impl + 5 tests
+- `crates/prism-graph/src/lib.rs` -- added sync_coordinator module
+- `crates/prism-graph/Cargo.toml` -- added async-trait, dev-deps
+
+---
+
 ## Session 2026-04-13 -- Day 4: Identity + tenant isolation + event bus
 
 ### Implemented

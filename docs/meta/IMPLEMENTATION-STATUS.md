@@ -30,4 +30,4 @@
 | **REUSABLE** | AuditLogger | **Done** | prism-audit | event_store.rs | 7 unit | Day 2 |
 | **REUSABLE** | TenantFilter | **Done** | prism-core | tenant_filter.rs | 3 unit | Day 4 |
 | **REUSABLE** | EventBusPublisher | **Done** | prism-runtime | event_bus.rs | 3 unit | Day 4 |
-| **REUSABLE** | SyncCoordinator | Not Started | prism-graph | sync_coordinator.rs | -- | Day 5 (stub only) |
+| **REUSABLE** | SyncCoordinator | **Done** | prism-graph | sync_coordinator.rs | 5 unit | Day 5 (stub only) |
