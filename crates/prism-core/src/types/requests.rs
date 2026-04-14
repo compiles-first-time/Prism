@@ -1660,6 +1660,78 @@ pub struct IsolationAuditResult {
     pub violations: Vec<IsolationViolation>,
 }
 
+// -- Connection lifecycle requests (SR_CONN_01 .. SR_CONN_10) -----------------
+
+/// Input for requesting a new external system connection.
+/// Implements: SR_CONN_01
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionRequestInput {
+    pub tenant_id: TenantId,
+    pub system_id: String,
+    pub connection_type: String,
+    pub scope: String,
+    pub justification: Option<String>,
+    pub requested_by: UserId,
+}
+
+/// Result of creating a connection request.
+/// Implements: SR_CONN_01
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionRequestResult {
+    pub connection_id: uuid::Uuid,
+    pub state: super::enums::ConnectionState,
+}
+
+/// Input for provisioning a credential on a connection.
+/// Implements: SR_CONN_04
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialProvisionInput {
+    pub connection_id: uuid::Uuid,
+    pub raw_credential: String,
+}
+
+/// Result of credential provisioning.
+/// Implements: SR_CONN_04
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CredentialProvisionResult {
+    pub credential_ref: String,
+}
+
+/// Result of testing connectivity to an external system.
+/// Implements: SR_CONN_05
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionTestResult {
+    pub passed: bool,
+    pub latency_ms: u64,
+    pub error: Option<String>,
+}
+
+/// Result of activating a connection.
+/// Implements: SR_CONN_06
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionActivationResult {
+    pub active: bool,
+    pub first_pull_at: Option<DateTime<Utc>>,
+}
+
+/// Input for marking a connection as degraded.
+/// Implements: SR_CONN_07
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DegradationInput {
+    pub connection_id: uuid::Uuid,
+    pub reason: String,
+    pub evidence: serde_json::Value,
+}
+
+/// Input for decommissioning a connection.
+/// Implements: SR_CONN_09
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecommissionInput {
+    pub connection_id: uuid::Uuid,
+    pub reason: String,
+    pub retain_data: bool,
+}
+
 // -- Feature flag cache invalidation requests (SR_DM_29) ----------------------
 
 /// Request to toggle a feature flag with cache invalidation.

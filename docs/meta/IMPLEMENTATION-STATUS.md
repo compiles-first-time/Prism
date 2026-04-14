@@ -89,6 +89,16 @@
 | SR_DM_27 | Tenant isolation (query) | **Done** | prism-core | tenant_filter.rs | 3 unit | Day 4 (single-tenant stub) |
 | SR_DM_28 | Tenant isolation audit | **Done** | prism-graph | data_model.rs | 3 unit | Week 3 Day 19 |
 | SR_DM_29 | Feature flag cache | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 19 |
+| SR_CONN_01 | Connection request | **Done** | prism-adapters | connection_lifecycle.rs | 2 unit | Week 3 Day 20 |
+| SR_CONN_02 | Connection approval | **Done** | prism-adapters | connection_lifecycle.rs | 2 unit | Week 3 Day 20 |
+| SR_CONN_03 | Connection consent | **Done** | prism-adapters | connection_lifecycle.rs | 1 unit | Week 3 Day 20 |
+| SR_CONN_04 | Credential provisioning | **Done** | prism-adapters | connection_lifecycle.rs | 2 unit | Week 3 Day 20 |
+| SR_CONN_05 | Connection test | **Done** | prism-adapters | connection_lifecycle.rs | 2 unit | Week 3 Day 20 |
+| SR_CONN_06 | Connection activation | **Done** | prism-adapters | connection_lifecycle.rs | 2 unit | Week 3 Day 20 |
+| SR_CONN_07 | Mark degraded | **Done** | prism-adapters | connection_lifecycle.rs | 2 unit | Week 3 Day 20 |
+| SR_CONN_08 | Suspend connection | **Done** | prism-adapters | connection_lifecycle.rs | 2 unit | Week 3 Day 20 |
+| SR_CONN_09 | Decommission | **Done** | prism-adapters | connection_lifecycle.rs | 2 unit | Week 3 Day 20 |
+| SR_CONN_10 | Recovery | **Done** | prism-adapters | connection_lifecycle.rs | 3 unit | Week 3 Day 20 |
 | **REUSABLE** | MerkleChainHasher | **Done** | prism-audit | merkle_chain.rs | 7 unit | Day 2 |
 | **REUSABLE** | AuditLogger | **Done** | prism-audit | event_store.rs | 7 unit | Day 2 |
 | **REUSABLE** | TenantFilter | **Done** | prism-core | tenant_filter.rs | 3 unit | Day 4 |

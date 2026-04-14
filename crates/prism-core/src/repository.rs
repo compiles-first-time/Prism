@@ -226,6 +226,45 @@ pub trait DecisionSampleRepository: Send + Sync {
     ) -> Result<Vec<(String, serde_json::Value, String)>, PrismError>;
 }
 
+// -- Connection Record Repository (SR_CONN_01 .. SR_CONN_10) ------------------
+
+/// Persistence operations for external system connection records.
+/// Implements: SR_CONN_01
+#[async_trait]
+pub trait ConnectionRecordRepository: Send + Sync {
+    /// Create a new connection record.
+    /// Implements: SR_CONN_01
+    async fn create(&self, record: &ConnectionRecord) -> Result<(), PrismError>;
+
+    /// Retrieve a connection record by ID.
+    async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<ConnectionRecord>, PrismError>;
+
+    /// Update the status of a connection record.
+    /// Implements: SR_CONN_02, SR_CONN_05, SR_CONN_06, SR_CONN_07, SR_CONN_08, SR_CONN_09, SR_CONN_10
+    async fn update_status(
+        &self,
+        id: uuid::Uuid,
+        status: ConnectionState,
+    ) -> Result<(), PrismError>;
+
+    /// Update the credential reference on a connection record.
+    /// Implements: SR_CONN_04
+    async fn update_credential(
+        &self,
+        id: uuid::Uuid,
+        credential_ref: Option<String>,
+    ) -> Result<(), PrismError>;
+
+    /// Update connection KPI metrics.
+    /// Implements: SR_CONN_07
+    async fn update_kpis(
+        &self,
+        id: uuid::Uuid,
+        error_rate: Option<f64>,
+        avg_latency_ms: Option<u64>,
+    ) -> Result<(), PrismError>;
+}
+
 // -- Connection Consent Repository (SR_GOV_70) --------------------------------
 
 /// Persistence operations for connection consents.

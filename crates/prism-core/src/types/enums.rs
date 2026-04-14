@@ -443,6 +443,30 @@ pub enum MaintenanceCycleType {
     TenantIsolationAudit,
 }
 
+/// Connection lifecycle state for external system connections.
+/// Defines the full state machine from request through decommission.
+/// Implements: SR_CONN_01 through SR_CONN_10
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConnectionState {
+    /// Connection has been requested but not yet approved.
+    Requested,
+    /// Connection approved and being configured (consent, credentials).
+    Configuring,
+    /// Credential provisioned, connectivity test in progress.
+    Testing,
+    /// Connection is live and pulling data.
+    Active,
+    /// Connection KPIs have breached thresholds.
+    Degraded,
+    /// Connection suspended by admin action.
+    Suspended,
+    /// Connection test or operation failed.
+    Failed,
+    /// Connection permanently retired, credential revoked.
+    Decommissioned,
+}
+
 /// Source layer that produced a governance event (SR_GOV_47).
 /// Maps to the architectural layers in the PRISM spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

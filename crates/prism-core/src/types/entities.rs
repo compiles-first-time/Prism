@@ -338,6 +338,29 @@ pub struct Delegation {
     pub is_active: bool,
 }
 
+// -- Connection Record (SR_CONN_01) -----------------------------------------
+
+/// A registered external system connection governed by PRISM.
+/// Tracks the full lifecycle from request through decommission.
+/// Implements: SR_CONN_01
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionRecord {
+    pub id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    pub system_id: String,
+    pub connection_type: String,
+    pub scope: String,
+    pub status: super::enums::ConnectionState,
+    pub credential_ref: Option<String>,
+    pub justification: Option<String>,
+    pub requested_by: UserId,
+    pub first_pull_at: Option<DateTime<Utc>>,
+    pub kpi_error_rate: Option<f64>,
+    pub kpi_avg_latency_ms: Option<u64>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 // -- Component Info (SR_GOV_78) ---------------------------------------------
 
 /// Metadata about a registered component for preflight checks.

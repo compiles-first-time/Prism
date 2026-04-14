@@ -4,6 +4,21 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-14 -- Day 20 (Week 3): Spec 03 Connection Layer — lifecycle state machine
+
+### Implemented
+- ConnectionState enum: Requested, Configuring, Testing, Active, Degraded, Suspended, Failed, Decommissioned
+- ConnectionRecord entity, ConnectionRecordRepository trait
+- CaaSClient trait (credential vault), ExternalSystemTester trait (connectivity probe)
+- validate_transition(): 14 legal state transitions enforced
+- SR_CONN_01-10: Full connection lifecycle in ConnectionLifecycleService
+  - request, approve, consent, provision_credential, test, activate, degrade, suspend, decommission, recover
+
+### Test Summary
+- 20 new tests, 332 total, all passing. All quality gates green.
+
+---
+
 ## Session 2026-04-14 -- Day 19 (Week 3): Spec 02 Data Model — COMPLETE
 
 ### Implemented
