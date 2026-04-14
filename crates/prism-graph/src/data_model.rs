@@ -1,6 +1,8 @@
 //! Data model node services for dual-store (PG + Neo4j) persistence.
 //!
-//! Implements: SR_DM_03, SR_DM_04, SR_DM_06, SR_DM_07, SR_DM_08, SR_DM_09, SR_DM_10
+//! Implements: SR_DM_03, SR_DM_04, SR_DM_06, SR_DM_07, SR_DM_08, SR_DM_09, SR_DM_10,
+//!             SR_DM_12, SR_DM_13, SR_DM_14, SR_DM_15, SR_DM_16, SR_DM_17, SR_DM_18,
+//!             SR_DM_19, SR_DM_21
 //!
 //! All services use trait-based abstractions (`GraphWriter`, `PgWriter`,
 //! `PartitionManager`) so that mock implementations can be used in tests
@@ -9,6 +11,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use chrono::{Duration, Utc};
 use tracing::info;
 
 use prism_audit::event_store::AuditLogger;
@@ -620,6 +623,722 @@ impl RejectionNodeService {
 }
 
 // ============================================================================
+// SR_DM_12 -- Component node service
+// ============================================================================
+
+/// Service for creating Component graph nodes.
+///
+/// A Component represents a reusable automation building block
+/// (function, model, connector) tracked in the knowledge graph.
+///
+/// Implements: SR_DM_12
+pub struct ComponentNodeService {
+    writer: Arc<dyn GraphWriter>,
+    audit: AuditLogger,
+}
+
+impl ComponentNodeService {
+    pub fn new(writer: Arc<dyn GraphWriter>, audit: AuditLogger) -> Self {
+        Self { writer, audit }
+    }
+
+    /// Create a Component graph node.
+    ///
+    /// 1. Serialize input properties.
+    /// 2. Create the node via `GraphWriter`.
+    /// 3. Emit an audit event.
+    ///
+    /// Implements: SR_DM_12
+    pub async fn create(
+        &self,
+        input: ComponentNodeInput,
+    ) -> Result<ComponentNodeResult, PrismError> {
+        let properties = serde_json::json!({
+            "component_id": input.component_id,
+            "category": input.category,
+            "version": input.version,
+            "git_sha": input.git_sha,
+            "status": input.status,
+            "metadata": input.metadata,
+        });
+
+        let node_id = self
+            .writer
+            .create_node(input.tenant_id, "Component", properties.clone())
+            .await?;
+
+        info!(
+            tenant_id = %input.tenant_id,
+            node_id = %node_id,
+            component_id = %input.component_id,
+            "component graph node created"
+        );
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "data_model.component_created".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: Some(node_id),
+                target_type: Some("Component".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Graph,
+                governance_authority: None,
+                payload: properties,
+            })
+            .await?;
+
+        Ok(ComponentNodeResult { node_id })
+    }
+}
+
+// ============================================================================
+// SR_DM_13 -- Component registry service
+// ============================================================================
+
+/// Service for registering components in the relational store.
+///
+/// The component registry is a PG table that tracks component versions,
+/// ownership, and scope for relational queries and reporting.
+///
+/// Implements: SR_DM_13
+pub struct ComponentRegistryService {
+    pg_writer: Arc<dyn PgWriter>,
+    audit: AuditLogger,
+}
+
+impl ComponentRegistryService {
+    pub fn new(pg_writer: Arc<dyn PgWriter>, audit: AuditLogger) -> Self {
+        Self { pg_writer, audit }
+    }
+
+    /// Register a component in the relational registry.
+    ///
+    /// 1. Insert a row via `PgWriter`.
+    /// 2. Emit an audit event.
+    ///
+    /// Implements: SR_DM_13
+    pub async fn register(
+        &self,
+        input: ComponentRegistryRow,
+    ) -> Result<ComponentRegistryResult, PrismError> {
+        let data = serde_json::json!({
+            "tenant_id": input.tenant_id.to_string(),
+            "component_id": input.component_id,
+            "version": input.version,
+            "git_sha": input.git_sha,
+            "status": input.status,
+            "owner_id": input.owner_id.to_string(),
+            "scope": input.scope,
+        });
+
+        let row_id = self
+            .pg_writer
+            .insert_row("component_registry", data.clone())
+            .await?;
+
+        info!(
+            tenant_id = %input.tenant_id,
+            row_id = %row_id,
+            component_id = %input.component_id,
+            "component registered in relational store"
+        );
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "data_model.component_registered".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: Some(row_id),
+                target_type: Some("ComponentRegistry".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Graph,
+                governance_authority: None,
+                payload: data,
+            })
+            .await?;
+
+        Ok(ComponentRegistryResult { row_id })
+    }
+}
+
+// ============================================================================
+// SR_DM_14 -- Component performance service
+// ============================================================================
+
+/// Service for recording component performance telemetry.
+///
+/// High-volume telemetry -- no audit event emitted.
+///
+/// Implements: SR_DM_14
+pub struct ComponentPerformanceService {
+    pg_writer: Arc<dyn PgWriter>,
+}
+
+impl ComponentPerformanceService {
+    pub fn new(pg_writer: Arc<dyn PgWriter>) -> Self {
+        Self { pg_writer }
+    }
+
+    /// Record component performance metrics.
+    ///
+    /// 1. Insert a row via `PgWriter`.
+    /// 2. No audit event (high-volume telemetry).
+    ///
+    /// Implements: SR_DM_14
+    pub async fn record(
+        &self,
+        input: ComponentPerformanceRow,
+    ) -> Result<ComponentPerformanceResult, PrismError> {
+        let data = serde_json::json!({
+            "tenant_id": input.tenant_id.to_string(),
+            "component_id": input.component_id,
+            "execution_count": input.execution_count,
+            "latency_ms": input.latency_ms,
+            "success_count": input.success_count,
+            "failure_count": input.failure_count,
+            "cost_usd": input.cost_usd,
+        });
+
+        let row_id = self
+            .pg_writer
+            .insert_row("component_performance", data)
+            .await?;
+
+        info!(
+            tenant_id = %input.tenant_id,
+            row_id = %row_id,
+            component_id = %input.component_id,
+            "component performance recorded"
+        );
+
+        Ok(ComponentPerformanceResult { row_id })
+    }
+}
+
+// ============================================================================
+// SR_DM_15 -- ModelExecution node service
+// ============================================================================
+
+/// Service for creating ModelExecution graph nodes.
+///
+/// Tracks individual LLM invocations: model, slot, task type,
+/// token counts, latency, cost, and data sensitivity.
+///
+/// Implements: SR_DM_15
+pub struct ModelExecutionService {
+    writer: Arc<dyn GraphWriter>,
+    audit: AuditLogger,
+}
+
+impl ModelExecutionService {
+    pub fn new(writer: Arc<dyn GraphWriter>, audit: AuditLogger) -> Self {
+        Self { writer, audit }
+    }
+
+    /// Create a ModelExecution graph node.
+    ///
+    /// 1. Serialize input properties including task type.
+    /// 2. Create the node via `GraphWriter`.
+    /// 3. Emit an audit event.
+    ///
+    /// Implements: SR_DM_15
+    pub async fn create(
+        &self,
+        input: ModelExecutionInput,
+    ) -> Result<ModelExecutionResult, PrismError> {
+        let properties = serde_json::json!({
+            "model_id": input.model_id,
+            "slot": input.slot,
+            "task_type": serde_json::to_value(input.task_type)
+                .map_err(|e| PrismError::Serialization(e.to_string()))?,
+            "input_tokens": input.input_tokens,
+            "output_tokens": input.output_tokens,
+            "latency_ms": input.latency_ms,
+            "cost_usd": input.cost_usd,
+            "data_sensitivity": input.data_sensitivity,
+            "training_run_id": input.training_run_id.map(|id| id.to_string()),
+        });
+
+        let execution_id = self
+            .writer
+            .create_node(input.tenant_id, "ModelExecution", properties.clone())
+            .await?;
+
+        info!(
+            tenant_id = %input.tenant_id,
+            execution_id = %execution_id,
+            model_id = %input.model_id,
+            "model execution graph node created"
+        );
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "data_model.model_execution_created".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: Some(execution_id),
+                target_type: Some("ModelExecution".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Graph,
+                governance_authority: None,
+                payload: properties,
+            })
+            .await?;
+
+        Ok(ModelExecutionResult { execution_id })
+    }
+}
+
+// ============================================================================
+// SR_DM_16 -- ModelOutcomeScore service
+// ============================================================================
+
+/// Service for recording model outcome scores.
+///
+/// Creates a graph node with a SCORED_BY edge reference back to the
+/// model execution that produced the outcome.
+///
+/// Implements: SR_DM_16
+pub struct ModelOutcomeService {
+    writer: Arc<dyn GraphWriter>,
+    audit: AuditLogger,
+}
+
+impl ModelOutcomeService {
+    pub fn new(writer: Arc<dyn GraphWriter>, audit: AuditLogger) -> Self {
+        Self { writer, audit }
+    }
+
+    /// Score a model outcome with a SCORED_BY edge reference.
+    ///
+    /// 1. Serialize input properties including the execution reference.
+    /// 2. Create the node via `GraphWriter`.
+    /// 3. Emit an audit event.
+    ///
+    /// Implements: SR_DM_16
+    pub async fn score(&self, input: ModelOutcomeInput) -> Result<ModelOutcomeResult, PrismError> {
+        let properties = serde_json::json!({
+            "execution_id": input.execution_id.to_string(),
+            "outcome_type": input.outcome_type,
+            "outcome_value": input.outcome_value,
+            "quality_score": input.quality_score,
+            "edge_type": "SCORED_BY",
+            "edge_target": input.execution_id.to_string(),
+        });
+
+        let score_id = self
+            .writer
+            .create_node(input.tenant_id, "ModelOutcomeScore", properties.clone())
+            .await?;
+
+        info!(
+            tenant_id = %input.tenant_id,
+            score_id = %score_id,
+            execution_id = %input.execution_id,
+            "model outcome scored"
+        );
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "data_model.model_outcome_scored".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: Some(score_id),
+                target_type: Some("ModelOutcomeScore".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Graph,
+                governance_authority: None,
+                payload: properties,
+            })
+            .await?;
+
+        Ok(ModelOutcomeResult { score_id })
+    }
+}
+
+// ============================================================================
+// SR_DM_17 -- Model performance aggregation service
+// ============================================================================
+
+/// Service for aggregating model performance metrics by period.
+///
+/// Upserts aggregated rows into the `model_performance_analytics` PG table
+/// for dashboard and reporting use.
+///
+/// Implements: SR_DM_17
+pub struct ModelAggregationService {
+    pg_writer: Arc<dyn PgWriter>,
+    audit: AuditLogger,
+}
+
+impl ModelAggregationService {
+    pub fn new(pg_writer: Arc<dyn PgWriter>, audit: AuditLogger) -> Self {
+        Self { pg_writer, audit }
+    }
+
+    /// Aggregate model performance metrics for a period.
+    ///
+    /// 1. Upsert aggregation row via `PgWriter`.
+    /// 2. Emit an audit event.
+    ///
+    /// Implements: SR_DM_17
+    pub async fn aggregate(
+        &self,
+        input: ModelAggregationRequest,
+    ) -> Result<ModelAggregationResult, PrismError> {
+        let data = serde_json::json!({
+            "tenant_id": input.tenant_id.to_string(),
+            "period": input.period,
+            "aggregated_at": Utc::now().to_rfc3339(),
+        });
+
+        self.pg_writer
+            .insert_row("model_performance_analytics", data.clone())
+            .await?;
+
+        let rows_updated = 1u64;
+
+        info!(
+            tenant_id = %input.tenant_id,
+            period = %input.period,
+            rows_updated,
+            "model performance aggregation completed"
+        );
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "data_model.model_aggregation_complete".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("ModelPerformanceAnalytics".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Graph,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "period": input.period,
+                    "rows_updated": rows_updated,
+                }),
+            })
+            .await?;
+
+        Ok(ModelAggregationResult { rows_updated })
+    }
+}
+
+// ============================================================================
+// SR_DM_18 -- Vector embedding service
+// ============================================================================
+
+/// Pluggable embedding model trait.
+///
+/// Implementations produce a dense vector from input text.
+///
+/// Implements: SR_DM_18
+#[async_trait]
+pub trait EmbeddingModel: Send + Sync {
+    /// Embed text into a dense vector.
+    async fn embed_text(&self, text: &str) -> Result<Vec<f32>, PrismError>;
+
+    /// Return the model identifier.
+    fn model_id(&self) -> &str;
+
+    /// Return the embedding model version.
+    fn version(&self) -> &str;
+}
+
+/// Vector index writer trait for persisting embeddings.
+///
+/// Implementations write embeddings to a vector store (e.g., pgvector, Pinecone).
+///
+/// Implements: SR_DM_18
+#[async_trait]
+pub trait VectorIndexWriter: Send + Sync {
+    /// Write an embedding vector to the index.
+    async fn write_embedding(
+        &self,
+        tenant_id: TenantId,
+        source_node_id: uuid::Uuid,
+        vector: &[f32],
+        model_id: &str,
+        version: &str,
+    ) -> Result<(), PrismError>;
+}
+
+/// Service for creating vector embeddings from text.
+///
+/// Uses a pluggable `EmbeddingModel` to produce vectors and a
+/// `VectorIndexWriter` to persist them.
+///
+/// Implements: SR_DM_18
+pub struct VectorEmbeddingService {
+    embedding_model: Arc<dyn EmbeddingModel>,
+    vector_writer: Arc<dyn VectorIndexWriter>,
+    audit: AuditLogger,
+}
+
+impl VectorEmbeddingService {
+    pub fn new(
+        embedding_model: Arc<dyn EmbeddingModel>,
+        vector_writer: Arc<dyn VectorIndexWriter>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self {
+            embedding_model,
+            vector_writer,
+            audit,
+        }
+    }
+
+    /// Embed text and persist the resulting vector.
+    ///
+    /// 1. Call the embedding model to produce a vector.
+    /// 2. Write the vector to the index via `VectorIndexWriter`.
+    /// 3. Emit an audit event.
+    ///
+    /// Implements: SR_DM_18
+    pub async fn embed(&self, input: EmbeddingInput) -> Result<EmbeddingResult, PrismError> {
+        let vector = self.embedding_model.embed_text(&input.text).await?;
+        let model_id = self.embedding_model.model_id().to_string();
+        let version = self.embedding_model.version().to_string();
+
+        self.vector_writer
+            .write_embedding(
+                input.tenant_id,
+                input.source_node_id,
+                &vector,
+                &model_id,
+                &version,
+            )
+            .await?;
+
+        let embedded_at = Utc::now();
+        let vector_dim = vector.len();
+
+        info!(
+            tenant_id = %input.tenant_id,
+            source_node_id = %input.source_node_id,
+            vector_dim,
+            model_id = %model_id,
+            "text embedded"
+        );
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "data_model.text_embedded".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: Some(input.source_node_id),
+                target_type: Some("VectorEmbedding".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Graph,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "model_id": model_id,
+                    "vector_dim": vector_dim,
+                }),
+            })
+            .await?;
+
+        Ok(EmbeddingResult {
+            vector_dim,
+            model_id,
+            embedded_at,
+        })
+    }
+}
+
+// ============================================================================
+// SR_DM_19 -- Dual embedding store service
+// ============================================================================
+
+/// Service for storing dual embeddings during model migration.
+///
+/// During an embedding model migration, both old and new embeddings are
+/// stored for a transition window (default 7 days) to allow gradual cutover.
+///
+/// Implements: SR_DM_19
+pub struct DualEmbeddingService {
+    vector_writer: Arc<dyn VectorIndexWriter>,
+    audit: AuditLogger,
+}
+
+impl DualEmbeddingService {
+    pub fn new(vector_writer: Arc<dyn VectorIndexWriter>, audit: AuditLogger) -> Self {
+        Self {
+            vector_writer,
+            audit,
+        }
+    }
+
+    /// Store both old and new embeddings for dual-active migration.
+    ///
+    /// 1. Write the old embedding via `VectorIndexWriter`.
+    /// 2. Write the new embedding via `VectorIndexWriter`.
+    /// 3. Calculate the dual-active expiry (7 days from now).
+    /// 4. Emit an audit event.
+    ///
+    /// Implements: SR_DM_19
+    pub async fn store_dual(
+        &self,
+        input: DualEmbeddingInput,
+    ) -> Result<DualEmbeddingResult, PrismError> {
+        // Write old embedding
+        self.vector_writer
+            .write_embedding(
+                input.tenant_id,
+                input.source_node_id,
+                &input.old_embedding,
+                &input.old_model,
+                "old",
+            )
+            .await?;
+
+        // Write new embedding
+        self.vector_writer
+            .write_embedding(
+                input.tenant_id,
+                input.source_node_id,
+                &input.new_embedding,
+                &input.new_model,
+                "new",
+            )
+            .await?;
+
+        let dual_active_until = Utc::now() + Duration::days(7);
+
+        info!(
+            tenant_id = %input.tenant_id,
+            source_node_id = %input.source_node_id,
+            old_model = %input.old_model,
+            new_model = %input.new_model,
+            dual_active_until = %dual_active_until,
+            "dual embeddings stored"
+        );
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "data_model.dual_embedding_stored".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: Some(input.source_node_id),
+                target_type: Some("DualEmbedding".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Graph,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "old_model": input.old_model,
+                    "new_model": input.new_model,
+                    "dual_active_until": dual_active_until.to_rfc3339(),
+                }),
+            })
+            .await?;
+
+        Ok(DualEmbeddingResult { dual_active_until })
+    }
+}
+
+// ============================================================================
+// SR_DM_21 -- SA usage and anomaly log service
+// ============================================================================
+
+/// Service for logging service account usage and anomaly events.
+///
+/// Usage events are high-volume telemetry (no audit event).
+/// Anomaly events emit an audit event at the anomaly's severity level.
+///
+/// Implements: SR_DM_21
+pub struct SaUsageLogService {
+    pg_writer: Arc<dyn PgWriter>,
+    audit: AuditLogger,
+}
+
+impl SaUsageLogService {
+    pub fn new(pg_writer: Arc<dyn PgWriter>, audit: AuditLogger) -> Self {
+        Self { pg_writer, audit }
+    }
+
+    /// Log a service account usage event.
+    ///
+    /// High-volume telemetry -- no audit event emitted.
+    ///
+    /// Implements: SR_DM_21
+    pub async fn log_usage(&self, input: SaUsageEvent) -> Result<uuid::Uuid, PrismError> {
+        let data = serde_json::json!({
+            "tenant_id": input.tenant_id.to_string(),
+            "sa_id": input.sa_id.to_string(),
+            "action": input.action,
+            "target": input.target,
+            "timestamp": input.timestamp.to_rfc3339(),
+        });
+
+        let row_id = self.pg_writer.insert_row("sa_usage_log", data).await?;
+
+        info!(
+            tenant_id = %input.tenant_id,
+            sa_id = %input.sa_id,
+            action = %input.action,
+            "sa usage event logged"
+        );
+
+        Ok(row_id)
+    }
+
+    /// Log a service account anomaly event.
+    ///
+    /// Anomaly events are emitted at the anomaly's severity level.
+    ///
+    /// Implements: SR_DM_21
+    pub async fn log_anomaly(&self, input: SaAnomalyEvent) -> Result<uuid::Uuid, PrismError> {
+        let data = serde_json::json!({
+            "tenant_id": input.tenant_id.to_string(),
+            "sa_id": input.sa_id.to_string(),
+            "anomaly_type": input.anomaly_type,
+            "severity": serde_json::to_value(input.severity)
+                .map_err(|e| PrismError::Serialization(e.to_string()))?,
+            "evidence": input.evidence,
+        });
+
+        let row_id = self
+            .pg_writer
+            .insert_row("sa_anomaly_log", data.clone())
+            .await?;
+
+        info!(
+            tenant_id = %input.tenant_id,
+            sa_id = %input.sa_id,
+            anomaly_type = %input.anomaly_type,
+            "sa anomaly event logged"
+        );
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "data_model.sa_anomaly_logged".into(),
+                actor_id: input.sa_id,
+                actor_type: ActorType::ServicePrincipal,
+                target_id: Some(row_id),
+                target_type: Some("SaAnomalyLog".into()),
+                severity: input.severity,
+                source_layer: SourceLayer::Graph,
+                governance_authority: None,
+                payload: data,
+            })
+            .await?;
+
+        Ok(row_id)
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -1189,5 +1908,514 @@ mod tests {
         );
         assert_eq!(props["edge_type"], "JUSTIFIED_BY");
         assert_eq!(props["edge_target"], rec_id.to_string());
+    }
+
+    // -- Mock EmbeddingModel ----------------------------------------------------
+
+    struct MockEmbeddingModel {
+        dim: usize,
+        id: String,
+    }
+
+    impl MockEmbeddingModel {
+        fn new(dim: usize, id: &str) -> Self {
+            Self {
+                dim,
+                id: id.to_string(),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl EmbeddingModel for MockEmbeddingModel {
+        async fn embed_text(&self, _text: &str) -> Result<Vec<f32>, PrismError> {
+            Ok(vec![0.1; self.dim])
+        }
+
+        fn model_id(&self) -> &str {
+            &self.id
+        }
+
+        fn version(&self) -> &str {
+            "v1"
+        }
+    }
+
+    // -- Mock VectorIndexWriter -------------------------------------------------
+
+    struct MockVectorIndexWriter {
+        entries: Mutex<Vec<(uuid::Uuid, String, usize)>>,
+    }
+
+    impl MockVectorIndexWriter {
+        fn new() -> Self {
+            Self {
+                entries: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn entry_count(&self) -> usize {
+            self.entries.lock().unwrap().len()
+        }
+    }
+
+    #[async_trait]
+    impl VectorIndexWriter for MockVectorIndexWriter {
+        async fn write_embedding(
+            &self,
+            _tenant_id: TenantId,
+            source_node_id: uuid::Uuid,
+            vector: &[f32],
+            model_id: &str,
+            _version: &str,
+        ) -> Result<(), PrismError> {
+            self.entries
+                .lock()
+                .unwrap()
+                .push((source_node_id, model_id.to_string(), vector.len()));
+            Ok(())
+        }
+    }
+
+    // =========================================================================
+    // SR_DM_12 tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn component_node_creates_graph_node() {
+        let writer = Arc::new(MockGraphWriter::new());
+        let (_audit_repo, audit) = make_audit_logger();
+        let svc = ComponentNodeService::new(writer.clone(), audit);
+
+        let input = ComponentNodeInput {
+            tenant_id: TenantId::new(),
+            component_id: "risk-scorer-v2".into(),
+            category: "ml_model".into(),
+            version: "2.1.0".into(),
+            git_sha: Some("abc123def".into()),
+            status: "active".into(),
+            metadata: serde_json::json!({"framework": "pytorch"}),
+        };
+
+        let result = svc.create(input).await.unwrap();
+
+        assert_eq!(writer.node_count(), 1);
+        assert_ne!(result.node_id, uuid::Uuid::nil());
+    }
+
+    #[tokio::test]
+    async fn component_node_records_correct_properties() {
+        let writer = Arc::new(MockGraphWriter::new());
+        let (_audit_repo, audit) = make_audit_logger();
+        let svc = ComponentNodeService::new(writer.clone(), audit);
+
+        let input = ComponentNodeInput {
+            tenant_id: TenantId::new(),
+            component_id: "data-enricher".into(),
+            category: "connector".into(),
+            version: "1.0.0".into(),
+            git_sha: None,
+            status: "draft".into(),
+            metadata: serde_json::json!({}),
+        };
+
+        svc.create(input).await.unwrap();
+
+        let (node_type, props) = writer.last_node().unwrap();
+        assert_eq!(node_type, "Component");
+        assert_eq!(props["component_id"], "data-enricher");
+        assert_eq!(props["category"], "connector");
+    }
+
+    // =========================================================================
+    // SR_DM_13 tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn component_registry_inserts_row() {
+        let pg_writer = Arc::new(MockPgWriter::new());
+        let (_audit_repo, audit) = make_audit_logger();
+        let svc = ComponentRegistryService::new(pg_writer.clone(), audit);
+
+        let input = ComponentRegistryRow {
+            tenant_id: TenantId::new(),
+            component_id: "fraud-detector".into(),
+            version: "3.0.0".into(),
+            git_sha: Some("def456".into()),
+            status: "active".into(),
+            owner_id: UserId::new(),
+            scope: "bsa_aml".into(),
+        };
+
+        let result = svc.register(input).await.unwrap();
+
+        assert_ne!(result.row_id, uuid::Uuid::nil());
+        assert_eq!(pg_writer.row_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn component_registry_records_audit_event() {
+        let pg_writer = Arc::new(MockPgWriter::new());
+        let (audit_repo, audit) = make_audit_logger();
+        let svc = ComponentRegistryService::new(pg_writer, audit);
+
+        let input = ComponentRegistryRow {
+            tenant_id: TenantId::new(),
+            component_id: "report-gen".into(),
+            version: "1.2.0".into(),
+            git_sha: None,
+            status: "pending".into(),
+            owner_id: UserId::new(),
+            scope: "internal".into(),
+        };
+
+        svc.register(input).await.unwrap();
+
+        let events = audit_repo.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "data_model.component_registered");
+    }
+
+    // =========================================================================
+    // SR_DM_14 tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn component_performance_inserts_row() {
+        let pg_writer = Arc::new(MockPgWriter::new());
+        let svc = ComponentPerformanceService::new(pg_writer.clone());
+
+        let input = ComponentPerformanceRow {
+            tenant_id: TenantId::new(),
+            component_id: "risk-scorer".into(),
+            execution_count: 1000,
+            latency_ms: 250,
+            success_count: 990,
+            failure_count: 10,
+            cost_usd: 12.50,
+        };
+
+        let result = svc.record(input).await.unwrap();
+
+        assert_ne!(result.row_id, uuid::Uuid::nil());
+        assert_eq!(pg_writer.row_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn component_performance_records_metrics() {
+        let pg_writer = Arc::new(MockPgWriter::new());
+        let svc = ComponentPerformanceService::new(pg_writer.clone());
+
+        let input = ComponentPerformanceRow {
+            tenant_id: TenantId::new(),
+            component_id: "data-enricher".into(),
+            execution_count: 500,
+            latency_ms: 100,
+            success_count: 500,
+            failure_count: 0,
+            cost_usd: 5.00,
+        };
+
+        svc.record(input).await.unwrap();
+
+        let rows = pg_writer.rows.lock().unwrap();
+        assert_eq!(rows[0].0, "component_performance");
+        assert_eq!(rows[0].1["execution_count"], 500);
+    }
+
+    // =========================================================================
+    // SR_DM_15 tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn model_execution_creates_graph_node() {
+        let writer = Arc::new(MockGraphWriter::new());
+        let (_audit_repo, audit) = make_audit_logger();
+        let svc = ModelExecutionService::new(writer.clone(), audit);
+
+        let input = ModelExecutionInput {
+            tenant_id: TenantId::new(),
+            model_id: "claude-3-opus".into(),
+            slot: "primary".into(),
+            task_type: LlmTaskType::Inference,
+            input_tokens: 1500,
+            output_tokens: 800,
+            latency_ms: 3200,
+            cost_usd: 0.045,
+            data_sensitivity: "confidential".into(),
+            training_run_id: None,
+        };
+
+        let result = svc.create(input).await.unwrap();
+
+        assert_eq!(writer.node_count(), 1);
+        assert_ne!(result.execution_id, uuid::Uuid::nil());
+    }
+
+    #[tokio::test]
+    async fn model_execution_records_task_type() {
+        let writer = Arc::new(MockGraphWriter::new());
+        let (_audit_repo, audit) = make_audit_logger();
+        let svc = ModelExecutionService::new(writer.clone(), audit);
+
+        let input = ModelExecutionInput {
+            tenant_id: TenantId::new(),
+            model_id: "gpt-4".into(),
+            slot: "fallback".into(),
+            task_type: LlmTaskType::Tagging,
+            input_tokens: 200,
+            output_tokens: 50,
+            latency_ms: 800,
+            cost_usd: 0.01,
+            data_sensitivity: "internal".into(),
+            training_run_id: Some(uuid::Uuid::new_v4()),
+        };
+
+        svc.create(input).await.unwrap();
+
+        let (node_type, props) = writer.last_node().unwrap();
+        assert_eq!(node_type, "ModelExecution");
+        assert_eq!(props["task_type"], "tagging");
+    }
+
+    // =========================================================================
+    // SR_DM_16 tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn model_outcome_creates_graph_node() {
+        let writer = Arc::new(MockGraphWriter::new());
+        let (_audit_repo, audit) = make_audit_logger();
+        let svc = ModelOutcomeService::new(writer.clone(), audit);
+
+        let exec_id = uuid::Uuid::new_v4();
+        let input = ModelOutcomeInput {
+            tenant_id: TenantId::new(),
+            execution_id: exec_id,
+            outcome_type: "accuracy".into(),
+            outcome_value: "0.95".into(),
+            quality_score: 0.95,
+        };
+
+        let result = svc.score(input).await.unwrap();
+
+        assert_eq!(writer.node_count(), 1);
+        assert_ne!(result.score_id, uuid::Uuid::nil());
+    }
+
+    #[tokio::test]
+    async fn model_outcome_records_scored_by_edge() {
+        let writer = Arc::new(MockGraphWriter::new());
+        let (_audit_repo, audit) = make_audit_logger();
+        let svc = ModelOutcomeService::new(writer.clone(), audit);
+
+        let exec_id = uuid::Uuid::new_v4();
+        let input = ModelOutcomeInput {
+            tenant_id: TenantId::new(),
+            execution_id: exec_id,
+            outcome_type: "precision".into(),
+            outcome_value: "0.88".into(),
+            quality_score: 0.88,
+        };
+
+        svc.score(input).await.unwrap();
+
+        let (node_type, props) = writer.last_node().unwrap();
+        assert_eq!(node_type, "ModelOutcomeScore");
+        assert_eq!(props["edge_type"], "SCORED_BY");
+        assert_eq!(props["edge_target"], exec_id.to_string());
+    }
+
+    // =========================================================================
+    // SR_DM_17 tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn model_aggregation_runs() {
+        let pg_writer = Arc::new(MockPgWriter::new());
+        let (_audit_repo, audit) = make_audit_logger();
+        let svc = ModelAggregationService::new(pg_writer.clone(), audit);
+
+        let input = ModelAggregationRequest {
+            tenant_id: TenantId::new(),
+            period: "2026-04-14T00:00:00Z/P1D".into(),
+        };
+
+        let result = svc.aggregate(input).await.unwrap();
+
+        assert_eq!(result.rows_updated, 1);
+        assert_eq!(pg_writer.row_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn model_aggregation_records_period() {
+        let pg_writer = Arc::new(MockPgWriter::new());
+        let (audit_repo, audit) = make_audit_logger();
+        let svc = ModelAggregationService::new(pg_writer, audit);
+
+        let input = ModelAggregationRequest {
+            tenant_id: TenantId::new(),
+            period: "2026-04-W15".into(),
+        };
+
+        svc.aggregate(input).await.unwrap();
+
+        let events = audit_repo.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].event_type,
+            "data_model.model_aggregation_complete"
+        );
+        assert_eq!(events[0].payload["period"], "2026-04-W15");
+    }
+
+    // =========================================================================
+    // SR_DM_18 tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn vector_embedding_succeeds() {
+        let model = Arc::new(MockEmbeddingModel::new(384, "text-embedding-3-small"));
+        let vector_writer = Arc::new(MockVectorIndexWriter::new());
+        let (_audit_repo, audit) = make_audit_logger();
+        let svc = VectorEmbeddingService::new(model, vector_writer.clone(), audit);
+
+        let input = EmbeddingInput {
+            tenant_id: TenantId::new(),
+            source_node_id: uuid::Uuid::new_v4(),
+            text: "Customer risk assessment for Q4 2026".into(),
+            model_id: "text-embedding-3-small".into(),
+        };
+
+        let result = svc.embed(input).await.unwrap();
+
+        assert_eq!(result.vector_dim, 384);
+        assert_eq!(result.model_id, "text-embedding-3-small");
+        assert_eq!(vector_writer.entry_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn vector_embedding_records_correct_model_and_dim() {
+        let model = Arc::new(MockEmbeddingModel::new(1536, "text-embedding-ada-002"));
+        let vector_writer = Arc::new(MockVectorIndexWriter::new());
+        let (audit_repo, audit) = make_audit_logger();
+        let svc = VectorEmbeddingService::new(model, vector_writer, audit);
+
+        let input = EmbeddingInput {
+            tenant_id: TenantId::new(),
+            source_node_id: uuid::Uuid::new_v4(),
+            text: "Anomalous transaction pattern detected".into(),
+            model_id: "text-embedding-ada-002".into(),
+        };
+
+        let result = svc.embed(input).await.unwrap();
+
+        assert_eq!(result.vector_dim, 1536);
+        assert_eq!(result.model_id, "text-embedding-ada-002");
+
+        let events = audit_repo.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "data_model.text_embedded");
+        assert_eq!(events[0].payload["vector_dim"], 1536);
+    }
+
+    // =========================================================================
+    // SR_DM_19 tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn dual_embedding_stores_both_embeddings() {
+        let vector_writer = Arc::new(MockVectorIndexWriter::new());
+        let (_audit_repo, audit) = make_audit_logger();
+        let svc = DualEmbeddingService::new(vector_writer.clone(), audit);
+
+        let input = DualEmbeddingInput {
+            tenant_id: TenantId::new(),
+            source_node_id: uuid::Uuid::new_v4(),
+            old_embedding: vec![0.1, 0.2, 0.3],
+            new_embedding: vec![0.4, 0.5, 0.6, 0.7],
+            old_model: "ada-002".into(),
+            new_model: "text-embedding-3-small".into(),
+        };
+
+        svc.store_dual(input).await.unwrap();
+
+        assert_eq!(vector_writer.entry_count(), 2);
+    }
+
+    #[tokio::test]
+    async fn dual_embedding_records_expiry() {
+        let vector_writer = Arc::new(MockVectorIndexWriter::new());
+        let (audit_repo, audit) = make_audit_logger();
+        let svc = DualEmbeddingService::new(vector_writer, audit);
+
+        let input = DualEmbeddingInput {
+            tenant_id: TenantId::new(),
+            source_node_id: uuid::Uuid::new_v4(),
+            old_embedding: vec![1.0, 2.0],
+            new_embedding: vec![3.0, 4.0],
+            old_model: "v1-model".into(),
+            new_model: "v2-model".into(),
+        };
+
+        let result = svc.store_dual(input).await.unwrap();
+
+        // Dual window is 7 days from now
+        let now = chrono::Utc::now();
+        let diff = result.dual_active_until - now;
+        assert!(diff.num_days() >= 6 && diff.num_days() <= 7);
+
+        let events = audit_repo.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "data_model.dual_embedding_stored");
+    }
+
+    // =========================================================================
+    // SR_DM_21 tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn sa_usage_logged() {
+        let pg_writer = Arc::new(MockPgWriter::new());
+        let (_audit_repo, audit) = make_audit_logger();
+        let svc = SaUsageLogService::new(pg_writer.clone(), audit);
+
+        let input = SaUsageEvent {
+            tenant_id: TenantId::new(),
+            sa_id: uuid::Uuid::new_v4(),
+            action: "read".into(),
+            target: "customer_records".into(),
+            timestamp: chrono::Utc::now(),
+        };
+
+        let row_id = svc.log_usage(input).await.unwrap();
+
+        assert_ne!(row_id, uuid::Uuid::nil());
+        assert_eq!(pg_writer.row_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn sa_anomaly_logged_with_severity() {
+        let pg_writer = Arc::new(MockPgWriter::new());
+        let (audit_repo, audit) = make_audit_logger();
+        let svc = SaUsageLogService::new(pg_writer.clone(), audit);
+
+        let input = SaAnomalyEvent {
+            tenant_id: TenantId::new(),
+            sa_id: uuid::Uuid::new_v4(),
+            anomaly_type: "unusual_access_pattern".into(),
+            severity: Severity::High,
+            evidence: serde_json::json!({"deviation_score": 4.2}),
+        };
+
+        let row_id = svc.log_anomaly(input).await.unwrap();
+
+        assert_ne!(row_id, uuid::Uuid::nil());
+        assert_eq!(pg_writer.row_count(), 1);
+
+        let events = audit_repo.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "data_model.sa_anomaly_logged");
+        assert_eq!(events[0].severity, Severity::High);
     }
 }

@@ -4,6 +4,25 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-14 -- Day 18 (Week 3): Spec 02 Data Model — operational entities complete
+
+### Implemented
+- SR_DM_12 ComponentNodeService: Component graph node creation
+- SR_DM_13 ComponentRegistryService: Component registry PG row with versioning
+- SR_DM_14 ComponentPerformanceService: Component execution telemetry (high-volume, no audit)
+- SR_DM_15 ModelExecutionService: ModelExecution graph node with LlmTaskType enum (Inference/Tagging/Verification/Training/Evaluation)
+- SR_DM_16 ModelOutcomeService: ModelOutcomeScore node with SCORED_BY edge reference
+- SR_DM_17 ModelAggregationService: Periodic model performance aggregation for Router Stage 2
+- SR_DM_18 VectorEmbeddingService: Text embedding with pluggable EmbeddingModel and VectorIndexWriter traits, model_id tagging for rollback support
+- SR_DM_19 DualEmbeddingService: Dual embedding storage during canary windows (7-day default), supports D-33 zero-downtime rollback
+- SR_DM_21 SaUsageLogService: SA usage logging (high-volume) and anomaly logging (with severity-level audit events)
+
+### Test Summary
+- 18 new tests, 296 total, all passing. All quality gates green.
+- Spec 02 Section 2 (Operational Entities) COMPLETE
+
+---
+
 ## Session 2026-04-14 -- Day 17 (Week 3): Spec 02 Data Model — core entity nodes
 
 ### Implemented

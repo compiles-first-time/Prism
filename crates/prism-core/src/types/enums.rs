@@ -390,6 +390,18 @@ pub enum ApprovalDecision {
     Defer,
 }
 
+/// LLM task type for model execution tracking.
+/// Implements: SR_DM_15
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LlmTaskType {
+    Inference,
+    Tagging,
+    Verification,
+    Training,
+    Evaluation,
+}
+
 /// Origin of data ingested into a DataCollection node.
 /// Implements: SR_DM_07
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

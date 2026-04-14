@@ -1345,3 +1345,197 @@ pub struct RejectionNodeInput {
 pub struct RejectionNodeResult {
     pub rejection_id: uuid::Uuid,
 }
+
+// -- Component node requests (SR_DM_12) ----------------------------------------
+
+/// Input for creating a Component graph node.
+/// Implements: SR_DM_12
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentNodeInput {
+    pub tenant_id: TenantId,
+    pub component_id: String,
+    pub category: String,
+    pub version: String,
+    pub git_sha: Option<String>,
+    pub status: String,
+    pub metadata: serde_json::Value,
+}
+
+/// Result of Component graph node creation.
+/// Implements: SR_DM_12
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentNodeResult {
+    pub node_id: uuid::Uuid,
+}
+
+// -- Component registry row requests (SR_DM_13) --------------------------------
+
+/// Input for registering a component in the relational registry.
+/// Implements: SR_DM_13
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentRegistryRow {
+    pub tenant_id: TenantId,
+    pub component_id: String,
+    pub version: String,
+    pub git_sha: Option<String>,
+    pub status: String,
+    pub owner_id: UserId,
+    pub scope: String,
+}
+
+/// Result of component registry insertion.
+/// Implements: SR_DM_13
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentRegistryResult {
+    pub row_id: uuid::Uuid,
+}
+
+// -- Component performance requests (SR_DM_14) ---------------------------------
+
+/// Input for recording component performance telemetry.
+/// Implements: SR_DM_14
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentPerformanceRow {
+    pub tenant_id: TenantId,
+    pub component_id: String,
+    pub execution_count: u64,
+    pub latency_ms: u64,
+    pub success_count: u64,
+    pub failure_count: u64,
+    pub cost_usd: f64,
+}
+
+/// Result of component performance recording.
+/// Implements: SR_DM_14
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComponentPerformanceResult {
+    pub row_id: uuid::Uuid,
+}
+
+// -- ModelExecution node requests (SR_DM_15) ------------------------------------
+
+/// Input for creating a ModelExecution graph node.
+/// Implements: SR_DM_15
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelExecutionInput {
+    pub tenant_id: TenantId,
+    pub model_id: String,
+    pub slot: String,
+    pub task_type: LlmTaskType,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub latency_ms: u64,
+    pub cost_usd: f64,
+    pub data_sensitivity: String,
+    pub training_run_id: Option<uuid::Uuid>,
+}
+
+/// Result of ModelExecution graph node creation.
+/// Implements: SR_DM_15
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelExecutionResult {
+    pub execution_id: uuid::Uuid,
+}
+
+// -- ModelOutcomeScore requests (SR_DM_16) --------------------------------------
+
+/// Input for recording a model outcome score.
+/// Implements: SR_DM_16
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelOutcomeInput {
+    pub tenant_id: TenantId,
+    pub execution_id: uuid::Uuid,
+    pub outcome_type: String,
+    pub outcome_value: String,
+    pub quality_score: f64,
+}
+
+/// Result of model outcome scoring.
+/// Implements: SR_DM_16
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelOutcomeResult {
+    pub score_id: uuid::Uuid,
+}
+
+// -- Model performance aggregation requests (SR_DM_17) --------------------------
+
+/// Request to aggregate model performance metrics for a period.
+/// Implements: SR_DM_17
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelAggregationRequest {
+    pub tenant_id: TenantId,
+    pub period: String,
+}
+
+/// Result of model performance aggregation.
+/// Implements: SR_DM_17
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelAggregationResult {
+    pub rows_updated: u64,
+}
+
+// -- Vector embedding requests (SR_DM_18) ---------------------------------------
+
+/// Input for creating a vector embedding.
+/// Implements: SR_DM_18
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingInput {
+    pub tenant_id: TenantId,
+    pub source_node_id: uuid::Uuid,
+    pub text: String,
+    pub model_id: String,
+}
+
+/// Result of vector embedding creation.
+/// Implements: SR_DM_18
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddingResult {
+    pub vector_dim: usize,
+    pub model_id: String,
+    pub embedded_at: DateTime<Utc>,
+}
+
+// -- Dual embedding store requests (SR_DM_19) -----------------------------------
+
+/// Input for storing dual embeddings during model migration.
+/// Implements: SR_DM_19
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DualEmbeddingInput {
+    pub tenant_id: TenantId,
+    pub source_node_id: uuid::Uuid,
+    pub old_embedding: Vec<f32>,
+    pub new_embedding: Vec<f32>,
+    pub old_model: String,
+    pub new_model: String,
+}
+
+/// Result of dual embedding storage.
+/// Implements: SR_DM_19
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DualEmbeddingResult {
+    pub dual_active_until: DateTime<Utc>,
+}
+
+// -- SA usage and anomaly log requests (SR_DM_21) -------------------------------
+
+/// Input for logging a service account usage event.
+/// Implements: SR_DM_21
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaUsageEvent {
+    pub tenant_id: TenantId,
+    pub sa_id: uuid::Uuid,
+    pub action: String,
+    pub target: String,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Input for logging a service account anomaly event.
+/// Implements: SR_DM_21
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaAnomalyEvent {
+    pub tenant_id: TenantId,
+    pub sa_id: uuid::Uuid,
+    pub anomaly_type: String,
+    pub severity: Severity,
+    pub evidence: serde_json::Value,
+}

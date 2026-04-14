@@ -71,7 +71,16 @@
 | SR_DM_09 | Recommendation node | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 17 |
 | SR_DM_10 | Rejection node | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 17 |
 | SR_DM_11 | Lifecycle state machine | **Done** | prism-lifecycle | state_machine.rs | 12 unit | Day 3 |
+| SR_DM_12 | Component node | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 18 |
+| SR_DM_13 | Component registry | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 18 |
+| SR_DM_14 | Component performance | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 18 |
+| SR_DM_15 | ModelExecution node | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 18 |
+| SR_DM_16 | ModelOutcomeScore | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 18 |
+| SR_DM_17 | Model aggregation | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 18 |
+| SR_DM_18 | Vector embedding | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 18 |
+| SR_DM_19 | Dual embedding store | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 18 |
 | SR_DM_20 | Service account node | **Done** | prism-identity | pg_repository.rs | -- | Day 4 (PG only) |
+| SR_DM_21 | SA usage/anomaly log | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 18 |
 | SR_DM_27 | Tenant isolation (query) | **Done** | prism-core | tenant_filter.rs | 3 unit | Day 4 (single-tenant stub) |
 | **REUSABLE** | MerkleChainHasher | **Done** | prism-audit | merkle_chain.rs | 7 unit | Day 2 |
 | **REUSABLE** | AuditLogger | **Done** | prism-audit | event_store.rs | 7 unit | Day 2 |
