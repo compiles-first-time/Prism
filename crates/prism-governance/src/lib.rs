@@ -8,6 +8,7 @@ pub mod liability;
 pub mod meta_policy;
 pub mod pg_tenant_repo;
 pub mod project;
+pub mod rule_engine;
 pub mod shared_services;
 pub mod sod;
 pub mod tenant;

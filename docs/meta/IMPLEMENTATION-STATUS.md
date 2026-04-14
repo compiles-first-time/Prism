@@ -9,6 +9,8 @@
 | **D-22** | Audit Trail (Merkle chain) | **Done** | prism-audit | merkle_chain.rs | 7 unit | Day 2 |
 | SR_GOV_01 | Tenant onboarding | **Done** | prism-governance | tenant.rs | 10 unit | Day 3 |
 | SR_GOV_10 | Person/identity creation | **Done** | prism-identity | service_principal.rs | 10 unit | Day 4 |
+| SR_GOV_16 | ENFORCE rule evaluation | **Done** | prism-governance | rule_engine.rs | 7 unit | Week 2 Day 8 |
+| SR_GOV_17 | ADVISE rule evaluation | **Done** | prism-governance | rule_engine.rs | 4 unit | Week 2 Day 8 |
 | SR_GOV_41 | Create approval request | Deferred | prism-governance | lca.rs | -- | Needs LCA |
 | SR_GOV_42 | Compute LCA chain | Deferred | prism-governance | lca.rs | -- | Week 3+ |
 | SR_GOV_43 | Execute approval chain | Deferred | prism-governance | lca.rs | -- | Week 3+ |

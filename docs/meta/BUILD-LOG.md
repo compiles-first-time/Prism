@@ -4,6 +4,42 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-13 -- Day 8 (Week 2): Governance rule engine (SR_GOV_16-17)
+
+### Implemented
+- RuleEngine (SR_GOV_16, SR_GOV_17): governance rule evaluation engine
+  - SR_GOV_16 evaluate_enforce(): non-overridable ENFORCE rules, DENY on any match, default-DENY on repo failure (SE-01)
+  - SR_GOV_17 evaluate_advise(): overridable ADVISE rules returning ALLOW, ALLOW_WITH_WARNING, or REQUIRE_JUSTIFICATION
+  - Simple attribute-matching condition evaluator (MVP; replaceable with JSONLogic)
+  - GovernanceRule struct with rule_class, action_pattern, condition JSON, advisory_message
+  - GovernanceRuleRepository trait for rule persistence
+  - RuleClass, EnforceDecision, AdviseDecision enums
+  - Audit trail integration for all evaluation outcomes
+  - 11 unit tests: ENFORCE allow/deny/failsafe/multi-rule/tenant-isolation, ADVISE allow/warning/justification, condition matcher
+- Request/result types: RuleEvaluationRequest, EnforceEvaluationResult, AdviseEvaluationResult
+
+### Design Decisions
+- Condition matching is simple key-value equality (MVP); JSONLogic can be plugged in later via same interface
+- SR_GOV_16_SE-01 failsafe: DENY by default when rule repo is unavailable (fail-closed)
+- ADVISE `requires_justification` is a rule-level flag in the condition JSON (not a separate field)
+- ENFORCE denials are audited at HIGH severity; ADVISE at LOW
+- Rule actions use pattern matching (e.g., "automation.activate", "data.export")
+- Tenant isolation: rules are always scoped to the requesting tenant_id
+
+### Files Changed
+- `crates/prism-core/src/types/enums.rs` -- added RuleClass, EnforceDecision, AdviseDecision
+- `crates/prism-core/src/types/requests.rs` -- added GovernanceRule, RuleEvaluationRequest, EnforceEvaluationResult, AdviseEvaluationResult
+- `crates/prism-core/src/repository.rs` -- added GovernanceRuleRepository trait
+- `crates/prism-governance/src/rule_engine.rs` -- new file, RuleEngine + 11 tests
+- `crates/prism-governance/src/lib.rs` -- registered rule_engine module
+
+### Test Summary
+- 11 new tests in prism-governance (7 ENFORCE + 4 ADVISE/condition)
+- 82 total workspace tests, all passing
+- All quality gates green: fmt, clippy, test, check
+
+---
+
 ## Session 2026-04-13 -- Day 7 (Week 2): Visibility compartments (SR_GOV_31-33)
 
 ### Implemented

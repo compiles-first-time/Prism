@@ -183,6 +183,36 @@ pub enum ClassificationLevel {
     CriminalPenalty,
 }
 
+/// Classification of a governance rule.
+/// Implements: SR_GOV_16, SR_GOV_17
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleClass {
+    /// Non-overridable security/compliance rules. Cannot be bypassed.
+    Enforce,
+    /// Advisory rules that can be overridden with justification.
+    Advise,
+}
+
+/// Decision from an ENFORCE rule evaluation.
+/// Implements: SR_GOV_16
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnforceDecision {
+    Allow,
+    Deny,
+}
+
+/// Decision from an ADVISE rule evaluation.
+/// Implements: SR_GOV_17
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdviseDecision {
+    Allow,
+    AllowWithWarning,
+    RequireJustification,
+}
+
 /// Access decision for compartment-gated operations.
 /// Implements: SR_GOV_33
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

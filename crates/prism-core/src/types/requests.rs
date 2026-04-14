@@ -6,6 +6,65 @@ use serde::{Deserialize, Serialize};
 use super::enums::*;
 use super::identifiers::*;
 
+// -- Rule evaluation requests (SR_GOV_16, SR_GOV_17) -------------------------
+
+/// A governance rule that can be evaluated against an action.
+/// Rules are stored per-tenant and classified as ENFORCE or ADVISE.
+/// Implements: SR_GOV_16, SR_GOV_17
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GovernanceRule {
+    pub id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    pub name: String,
+    pub rule_class: RuleClass,
+    /// The action pattern this rule matches (e.g., "automation.activate", "data.export").
+    pub action_pattern: String,
+    /// JSONLogic-style condition. When evaluated as true, the rule fires.
+    pub condition: serde_json::Value,
+    /// For ADVISE rules: the advisory message shown to the user.
+    pub advisory_message: Option<String>,
+    pub is_active: bool,
+}
+
+/// Request to evaluate governance rules against a candidate action.
+/// Implements: SR_GOV_16, SR_GOV_17
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleEvaluationRequest {
+    pub tenant_id: TenantId,
+    /// The action being performed (e.g., "automation.activate").
+    pub action: String,
+    /// The principal performing the action.
+    pub subject_principal: uuid::Uuid,
+    /// Attributes of the action context for rule condition evaluation.
+    pub attributes: serde_json::Value,
+    /// Which rule classes to evaluate.
+    pub rule_classes: Vec<RuleClass>,
+}
+
+/// Result of evaluating ENFORCE rules.
+/// Implements: SR_GOV_16
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnforceEvaluationResult {
+    pub decision: EnforceDecision,
+    /// Rules that matched and contributed to the decision.
+    pub matched_rules: Vec<String>,
+    /// Reason for denial (if denied).
+    pub reason: Option<String>,
+}
+
+/// Result of evaluating ADVISE rules.
+/// Implements: SR_GOV_17
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdviseEvaluationResult {
+    pub decision: AdviseDecision,
+    /// Advisory messages from matched rules.
+    pub advisory_messages: Vec<String>,
+    /// Whether the caller needs to provide justification to proceed.
+    pub requires_justification: bool,
+    /// Rules that matched.
+    pub matched_rules: Vec<String>,
+}
+
 // -- Tenant requests (SR_GOV_01) --------------------------------------------
 
 /// Input for tenant onboarding.

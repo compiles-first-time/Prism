@@ -76,6 +76,21 @@ pub trait ServicePrincipalRepository: Send + Sync {
     async fn deactivate(&self, id: ServicePrincipalId) -> Result<(), PrismError>;
 }
 
+// -- Governance Rule Repository (SR_GOV_16, SR_GOV_17) ----------------------
+
+/// Persistence operations for governance rules.
+/// Implements: SR_GOV_16, SR_GOV_17
+#[async_trait]
+pub trait GovernanceRuleRepository: Send + Sync {
+    /// List active rules for a tenant matching the given action and rule class.
+    async fn list_active_rules(
+        &self,
+        tenant_id: TenantId,
+        action: &str,
+        rule_class: RuleClass,
+    ) -> Result<Vec<GovernanceRule>, PrismError>;
+}
+
 // -- Compartment Repository (SR_GOV_31) -------------------------------------
 
 /// Persistence operations for visibility compartments.
