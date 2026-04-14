@@ -62,7 +62,14 @@
 | SR_GOV_52 | Crypto-shredding | Deferred | prism-compliance | crypto_shredding.rs | -- | Week 3+ (needs CaaS) |
 | SR_DM_01 | Tenant node creation | **Done** | prism-governance | pg_tenant_repo.rs | -- | Day 3 (PG only; Neo4j Week 2) |
 | SR_DM_02 | Person node creation | **Done** | prism-identity | pg_repository.rs | -- | Day 4 (PG only) |
+| SR_DM_03 | Compartment node | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 17 |
+| SR_DM_04 | Connection node | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 17 |
 | SR_DM_05 | Audit events table | **Done** | prism-audit | pg_repository.rs | -- | Day 2 (migration + PG repo) |
+| SR_DM_06 | Audit partition maintenance | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 17 |
+| SR_DM_07 | DataCollection node | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 17 |
+| SR_DM_08 | DataField nodes | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 17 |
+| SR_DM_09 | Recommendation node | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 17 |
+| SR_DM_10 | Rejection node | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 17 |
 | SR_DM_11 | Lifecycle state machine | **Done** | prism-lifecycle | state_machine.rs | 12 unit | Day 3 |
 | SR_DM_20 | Service account node | **Done** | prism-identity | pg_repository.rs | -- | Day 4 (PG only) |
 | SR_DM_27 | Tenant isolation (query) | **Done** | prism-core | tenant_filter.rs | 3 unit | Day 4 (single-tenant stub) |

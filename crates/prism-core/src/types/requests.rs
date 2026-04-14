@@ -1195,3 +1195,153 @@ pub struct StateTransition {
     pub reason: String,
     pub transitioned_at: DateTime<Utc>,
 }
+
+// -- Data model node requests (SR_DM_03 .. SR_DM_10) --------------------------
+
+/// Input for creating a Compartment graph node.
+/// Implements: SR_DM_03
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompartmentNodeInput {
+    pub tenant_id: TenantId,
+    pub name: String,
+    pub classification_level: ClassificationLevel,
+    pub member_roles: Vec<RoleId>,
+    pub member_persons: Vec<UserId>,
+    pub purpose: String,
+    pub criminal_penalty_isolation: bool,
+}
+
+/// Result of compartment graph node creation.
+/// Implements: SR_DM_03
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompartmentNodeResult {
+    pub compartment_id: uuid::Uuid,
+}
+
+/// Input for creating a Connection graph node.
+/// Implements: SR_DM_04
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionNodeInput {
+    pub tenant_id: TenantId,
+    pub system_id: String,
+    pub connection_type: String,
+    pub auth_type: String,
+    pub credential_caas_ref: Option<String>,
+    pub status: String,
+    pub scope: String,
+    pub metadata: serde_json::Value,
+}
+
+/// Result of connection graph node creation.
+/// Implements: SR_DM_04
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionNodeResult {
+    pub connection_id: uuid::Uuid,
+}
+
+/// Input for audit partition maintenance.
+/// Implements: SR_DM_06
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditPartitionMaintenanceRequest {
+    pub tenant_id: TenantId,
+    pub period: String,
+}
+
+/// Result of audit partition maintenance.
+/// Implements: SR_DM_06
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditPartitionMaintenanceResult {
+    pub archived_count: u64,
+    pub dropped_count: u64,
+}
+
+/// Input for creating a DataCollection graph node.
+/// Implements: SR_DM_07
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataCollectionInput {
+    pub tenant_id: TenantId,
+    pub connection_id: uuid::Uuid,
+    pub source_system: String,
+    pub pull_timestamp: DateTime<Utc>,
+    pub freshness_policy: String,
+    pub record_count: u64,
+    pub ingestion_method: String,
+    pub source_file_ref: Option<String>,
+    pub training_consent: bool,
+    pub data_origin: DataOrigin,
+}
+
+/// Result of DataCollection graph node creation.
+/// Implements: SR_DM_07
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataCollectionResult {
+    pub collection_id: uuid::Uuid,
+}
+
+/// Input for upserting a batch of DataField graph nodes.
+/// Implements: SR_DM_08
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataFieldInputBatch {
+    pub tenant_id: TenantId,
+    pub collection_id: uuid::Uuid,
+    pub fields: Vec<DataFieldInput>,
+}
+
+/// A single data field definition within a DataCollection.
+/// Implements: SR_DM_08
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataFieldInput {
+    pub field_name: String,
+    pub technical_type: String,
+    pub semantic_type: Option<String>,
+    pub classification: Option<String>,
+    pub sensitivity_level: Option<String>,
+    pub completeness_pct: Option<f64>,
+}
+
+/// Result of a DataField batch upsert.
+/// Implements: SR_DM_08
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataFieldBatchResult {
+    pub upserted_count: usize,
+}
+
+/// Input for creating a Recommendation graph node (dual-store).
+/// Implements: SR_DM_09
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecommendationNodeInput {
+    pub tenant_id: TenantId,
+    pub content_hash: String,
+    pub model_used: String,
+    pub confidence: f64,
+    pub parameters_used: Vec<String>,
+    pub state: String,
+    pub category: Option<String>,
+}
+
+/// Result of Recommendation graph node creation.
+/// Implements: SR_DM_09
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecommendationNodeResult {
+    pub rec_id: uuid::Uuid,
+    pub audit_row_id: uuid::Uuid,
+}
+
+/// Input for creating a Rejection graph node.
+/// Implements: SR_DM_10
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RejectionNodeInput {
+    pub tenant_id: TenantId,
+    pub recommendation_id: uuid::Uuid,
+    pub category: String,
+    pub justification_text: String,
+    pub person_id: UserId,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Result of Rejection graph node creation.
+/// Implements: SR_DM_10
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RejectionNodeResult {
+    pub rejection_id: uuid::Uuid,
+}

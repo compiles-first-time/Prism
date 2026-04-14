@@ -4,6 +4,33 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-14 -- Day 17 (Week 3): Spec 02 Data Model — core entity nodes
+
+### Implemented
+- REUSABLE_GraphWriter trait: generic async graph node creation (idempotent MERGE pattern)
+- REUSABLE_PgWriter trait: generic async PG row insertion
+- PartitionManager trait: partition lifecycle (create/archive/drop)
+- SR_DM_03 CompartmentNodeService: Compartment graph node creation with classification/isolation properties
+- SR_DM_04 ConnectionNodeService: Connection graph node with auth/scope/metadata
+- SR_DM_06 AuditPartitionService: archive >12mo, drop >84mo (7yr retention) partitions
+- SR_DM_07 DataCollectionService: DataCollection node with origin/consent/freshness tracking, DataOrigin enum
+- SR_DM_08 DataFieldService: idempotent batch upsert of DataField nodes per collection
+- SR_DM_09 RecommendationNodeService: dual-store (graph + PG) recommendation persistence
+- SR_DM_10 RejectionNodeService: Rejection node with JUSTIFIED_BY edge reference
+
+### Files Changed
+- `crates/prism-core/src/types/enums.rs` -- added DataOrigin enum
+- `crates/prism-core/src/types/requests.rs` -- added 14 request/result types for SR_DM_03-10
+- `crates/prism-graph/src/data_model.rs` -- new file, 7 services + 3 reusable traits + 14 tests
+- `crates/prism-graph/src/lib.rs` -- registered data_model module
+- `crates/prism-graph/Cargo.toml` -- added prism-audit dependency
+
+### Test Summary
+- 14 new tests, 278 total workspace tests, all passing
+- All quality gates green
+
+---
+
 ## Session 2026-04-14 -- Day 16 (Week 3): Delegation, escalation, approval break-glass — GOVERNANCE LAYER COMPLETE
 
 ### Implemented
