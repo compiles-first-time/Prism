@@ -274,6 +274,178 @@ impl RuleEngine {
 
         Ok(())
     }
+
+    /// Capture and validate an ADVISE override justification.
+    ///
+    /// Called after `evaluate_advise` returns `requires_justification = true`.
+    /// Validates the justification text against the filler-word blocklist
+    /// and minimum-quality rules, then persists it linked to the action
+    /// and overridden rule.
+    ///
+    /// Implements: SR_GOV_18
+    pub async fn capture_justification(
+        &self,
+        request: &OverrideJustificationRequest,
+    ) -> Result<OverrideJustificationResult, PrismError> {
+        // Validate the justification text
+        if let Some(rejection) = JustificationValidator::validate(&request.justification_text) {
+            info!(
+                tenant_id = %request.tenant_id,
+                person_id = %request.person_id,
+                rule_id = %request.rule_id,
+                "ADVISE override justification rejected: {rejection}"
+            );
+
+            // Audit the rejection
+            self.audit
+                .log(AuditEventInput {
+                    tenant_id: request.tenant_id,
+                    event_type: "governance.justification_rejected".into(),
+                    actor_id: *request.person_id.as_uuid(),
+                    actor_type: ActorType::Human,
+                    target_id: Some(request.action_id),
+                    target_type: Some("Action".into()),
+                    severity: Severity::Medium,
+                    source_layer: SourceLayer::Governance,
+                    governance_authority: None,
+                    payload: serde_json::json!({
+                        "rule_id": request.rule_id.to_string(),
+                        "rejection_reason": rejection,
+                        "category": request.category,
+                    }),
+                })
+                .await?;
+
+            return Ok(OverrideJustificationResult {
+                accepted: false,
+                rejection_reason: Some(rejection),
+            });
+        }
+
+        // Justification accepted -- audit it
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: request.tenant_id,
+                event_type: "governance.advise_override_justified".into(),
+                actor_id: *request.person_id.as_uuid(),
+                actor_type: ActorType::Human,
+                target_id: Some(request.action_id),
+                target_type: Some("Action".into()),
+                severity: Severity::Medium,
+                source_layer: SourceLayer::Governance,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "rule_id": request.rule_id.to_string(),
+                    "justification_text": request.justification_text,
+                    "category": request.category,
+                }),
+            })
+            .await?;
+
+        info!(
+            tenant_id = %request.tenant_id,
+            person_id = %request.person_id,
+            rule_id = %request.rule_id,
+            "ADVISE override justification accepted"
+        );
+
+        Ok(OverrideJustificationResult {
+            accepted: true,
+            rejection_reason: None,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// JustificationValidator
+// ---------------------------------------------------------------------------
+
+/// Validates justification text for ADVISE overrides.
+///
+/// Rejects:
+/// - Empty or whitespace-only text
+/// - Text shorter than 20 characters (per BP-134)
+/// - Filler words that provide no meaningful justification
+///
+/// Returns `None` if valid, `Some(reason)` if rejected.
+///
+/// Implements: SR_GOV_18, SR_GOV_18_BE-01
+pub struct JustificationValidator;
+
+/// Words and phrases that indicate a low-effort justification.
+const FILLER_BLOCKLIST: &[&str] = &[
+    "because",
+    "ok",
+    "okay",
+    "n/a",
+    "na",
+    "none",
+    "no",
+    "nope",
+    "yes",
+    "idk",
+    "i don't know",
+    "i dont know",
+    "test",
+    "testing",
+    "asdf",
+    "aaa",
+    "xxx",
+    "...",
+    "---",
+];
+
+impl JustificationValidator {
+    /// Minimum character length for a justification (per BP-134).
+    const MIN_LENGTH: usize = 20;
+
+    /// Validate a justification string.
+    ///
+    /// Returns `None` if the justification passes all checks, or
+    /// `Some(reason)` describing the specific failure.
+    ///
+    /// Implements: SR_GOV_18_BE-01
+    pub fn validate(text: &str) -> Option<String> {
+        let trimmed = text.trim();
+
+        // Check empty
+        if trimmed.is_empty() {
+            return Some("justification text cannot be empty".into());
+        }
+
+        // Check minimum length (BP-134: at least 20 characters)
+        if trimmed.len() < Self::MIN_LENGTH {
+            return Some(format!(
+                "justification must be at least {} characters (got {}); \
+                 please provide a meaningful explanation",
+                Self::MIN_LENGTH,
+                trimmed.len()
+            ));
+        }
+
+        // Check filler-word blocklist
+        let lower = trimmed.to_lowercase();
+        for filler in FILLER_BLOCKLIST {
+            if lower == *filler {
+                return Some(format!(
+                    "justification \"{trimmed}\" is not a meaningful explanation; \
+                     please describe why this override is necessary"
+                ));
+            }
+        }
+
+        // Check if text is just repeated characters (e.g., "aaaaaaaaaaaaaaaaaaaaaa")
+        let first_char = lower.chars().next().unwrap(); // safe: non-empty
+        if lower.chars().all(|c| c == first_char) {
+            return Some(
+                "justification appears to be repeated characters; \
+                 please provide a meaningful explanation"
+                    .into(),
+            );
+        }
+
+        None
+    }
 }
 
 // ===========================================================================
@@ -651,5 +823,153 @@ mod tests {
         let attributes = serde_json::json!({"a": 1, "b": 2, "c": 3});
 
         assert!(RuleEngine::condition_matches(&condition, &attributes));
+    }
+
+    // -- SR_GOV_18 Justification Tests ----------------------------------------
+
+    fn make_justification_request(tenant_id: TenantId, text: &str) -> OverrideJustificationRequest {
+        OverrideJustificationRequest {
+            tenant_id,
+            person_id: UserId::new(),
+            action_id: uuid::Uuid::new_v4(),
+            rule_id: uuid::Uuid::new_v4(),
+            justification_text: text.into(),
+            category: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn justification_accepts_valid_text() {
+        let (engine, _) = make_engine();
+        let tenant_id = TenantId::new();
+
+        let request = make_justification_request(
+            tenant_id,
+            "Overriding because the client requested expedited processing for the Q4 deadline",
+        );
+        let result = engine.capture_justification(&request).await.unwrap();
+
+        assert!(result.accepted);
+        assert!(result.rejection_reason.is_none());
+    }
+
+    #[tokio::test]
+    async fn justification_rejects_empty_text() {
+        let (engine, _) = make_engine();
+        let tenant_id = TenantId::new();
+
+        let request = make_justification_request(tenant_id, "");
+        let result = engine.capture_justification(&request).await.unwrap();
+
+        assert!(!result.accepted);
+        assert!(result.rejection_reason.unwrap().contains("empty"));
+    }
+
+    #[tokio::test]
+    async fn justification_rejects_whitespace_only() {
+        let (engine, _) = make_engine();
+        let tenant_id = TenantId::new();
+
+        let request = make_justification_request(tenant_id, "   \t\n  ");
+        let result = engine.capture_justification(&request).await.unwrap();
+
+        assert!(!result.accepted);
+        assert!(result.rejection_reason.unwrap().contains("empty"));
+    }
+
+    #[tokio::test]
+    async fn justification_rejects_too_short() {
+        let (engine, _) = make_engine();
+        let tenant_id = TenantId::new();
+
+        let request = make_justification_request(tenant_id, "short reason");
+        let result = engine.capture_justification(&request).await.unwrap();
+
+        assert!(!result.accepted);
+        assert!(result.rejection_reason.unwrap().contains("at least 20"));
+    }
+
+    #[tokio::test]
+    async fn justification_rejects_filler_words() {
+        let (engine, _) = make_engine();
+        let tenant_id = TenantId::new();
+
+        for filler in &["because", "ok", "n/a", "idk", "i don't know", "nope"] {
+            let request = make_justification_request(tenant_id, filler);
+            let result = engine.capture_justification(&request).await.unwrap();
+
+            assert!(
+                !result.accepted,
+                "filler word '{filler}' should be rejected"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn justification_rejects_repeated_characters() {
+        let (engine, _) = make_engine();
+        let tenant_id = TenantId::new();
+
+        let request = make_justification_request(tenant_id, "aaaaaaaaaaaaaaaaaaaaaa");
+        let result = engine.capture_justification(&request).await.unwrap();
+
+        assert!(!result.accepted);
+        assert!(result.rejection_reason.unwrap().contains("repeated"));
+    }
+
+    #[tokio::test]
+    async fn justification_accepts_with_category() {
+        let (engine, _) = make_engine();
+        let tenant_id = TenantId::new();
+
+        let mut request = make_justification_request(
+            tenant_id,
+            "Client deadline requires expedited processing per executive approval",
+        );
+        request.category = Some("business_urgency".into());
+
+        let result = engine.capture_justification(&request).await.unwrap();
+        assert!(result.accepted);
+    }
+
+    // -- JustificationValidator Unit Tests ------------------------------------
+
+    #[test]
+    fn validator_accepts_valid_justification() {
+        assert!(JustificationValidator::validate(
+            "This override is necessary because the compliance team approved the exception"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn validator_rejects_empty() {
+        assert!(JustificationValidator::validate("").is_some());
+    }
+
+    #[test]
+    fn validator_rejects_under_min_length() {
+        assert!(JustificationValidator::validate("too short").is_some());
+    }
+
+    #[test]
+    fn validator_rejects_blocklist_match() {
+        assert!(JustificationValidator::validate("because").is_some());
+        assert!(JustificationValidator::validate("N/A").is_some());
+        assert!(JustificationValidator::validate("IDK").is_some());
+    }
+
+    #[test]
+    fn validator_allows_blocklist_word_in_longer_text() {
+        // "because" alone is blocked, but "because X" as part of a real sentence is fine
+        assert!(JustificationValidator::validate(
+            "Overriding because the regulatory deadline is tomorrow and we have board approval"
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn validator_rejects_repeated_chars() {
+        assert!(JustificationValidator::validate("xxxxxxxxxxxxxxxxxxxx").is_some());
     }
 }

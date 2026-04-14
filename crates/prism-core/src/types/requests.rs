@@ -65,6 +65,36 @@ pub struct AdviseEvaluationResult {
     pub matched_rules: Vec<String>,
 }
 
+// -- Override justification (SR_GOV_18) ---------------------------------------
+
+/// Request to capture an ADVISE override justification.
+/// Submitted after SR_GOV_17 returns `requires_justification = true`.
+/// Implements: SR_GOV_18
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverrideJustificationRequest {
+    pub tenant_id: TenantId,
+    /// The person providing the justification.
+    pub person_id: UserId,
+    /// Opaque action identifier linking this justification to the action being overridden.
+    pub action_id: uuid::Uuid,
+    /// The rule that was overridden.
+    pub rule_id: uuid::Uuid,
+    /// Free-text justification. Must pass relevance validation.
+    pub justification_text: String,
+    /// Optional category for structured classification.
+    pub category: Option<String>,
+}
+
+/// Result of a justification capture.
+/// Implements: SR_GOV_18
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OverrideJustificationResult {
+    /// Whether the justification was accepted.
+    pub accepted: bool,
+    /// If rejected, the specific reason and guidance.
+    pub rejection_reason: Option<String>,
+}
+
 // -- Tenant requests (SR_GOV_01) --------------------------------------------
 
 /// Input for tenant onboarding.

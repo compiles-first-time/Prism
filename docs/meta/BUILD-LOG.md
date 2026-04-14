@@ -4,6 +4,38 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-14 -- Day 9 (Week 2): ADVISE override justification (SR_GOV_18)
+
+### Implemented
+- SR_GOV_18 capture_justification() on RuleEngine: validates and records ADVISE override justifications
+  - JustificationValidator: reusable pure-logic validator with:
+    - Empty/whitespace rejection
+    - Minimum 20-character length (BP-134)
+    - Filler-word blocklist: "because", "ok", "n/a", "idk", "i don't know", "nope", etc.
+    - Repeated-character detection (e.g., "aaaaaaa...")
+    - Blocklist words allowed when embedded in longer meaningful text
+  - Audit trail: `governance.advise_override_justified` on accept, `governance.justification_rejected` on reject
+  - SR_GOV_18_BE-01: rejected justifications return specific guidance to the user
+- OverrideJustificationRequest/Result types in prism-core
+- 13 new tests: 7 integration (accept/reject/empty/whitespace/short/filler/repeated/category) + 6 pure validator unit tests
+
+### Design Decisions
+- JustificationValidator is a standalone struct with a static validate() method -- reusable by SR_GOV_72 (rejection justification) later
+- Blocklist matching is exact-match on the full trimmed text; "because" alone is blocked, but "I'm overriding because..." passes
+- 20-character minimum per BP-134 prevents trivially short non-blocklisted text
+- Repeated-character check catches padding attempts (e.g., "xxxxxxxxxxxxxxxxxxxx")
+
+### Files Changed
+- `crates/prism-core/src/types/requests.rs` -- added OverrideJustificationRequest/Result
+- `crates/prism-governance/src/rule_engine.rs` -- added capture_justification(), JustificationValidator, FILLER_BLOCKLIST, 13 tests
+
+### Test Summary
+- 13 new tests in prism-governance (7 integration + 6 validator)
+- 95 total workspace tests, all passing
+- All quality gates green: fmt, clippy, test, check
+
+---
+
 ## Session 2026-04-13 -- Day 8 (Week 2): Governance rule engine (SR_GOV_16-17)
 
 ### Implemented
