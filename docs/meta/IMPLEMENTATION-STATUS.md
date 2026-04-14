@@ -148,6 +148,21 @@
 | SR_INT_13 | Completeness tags | **Done** | prism-llm | intelligence.rs | 2 unit | Day 24 |
 | SR_INT_14 | Recommendation accuracy | **Done** | prism-llm | intelligence.rs | 3 unit | Day 24 |
 | SR_INT_15 | Vector semantic search | **Done** | prism-llm | intelligence.rs | 3 unit | Day 24 |
+| SR_INT_16 | Cascade Impact Analysis | **Done** | prism-llm | intelligence.rs | 3 unit | Day 25 |
+| SR_INT_17 | Semantic Disambiguation | **Done** | prism-llm | intelligence.rs | 2 unit | Day 25 |
+| SR_INT_18 | DS data gathering | **Done** | prism-llm | intelligence.rs | 2 unit | Day 25 |
+| SR_INT_19 | Research Agent | **Done** | prism-llm | intelligence.rs | 2 unit | Day 25 |
+| SR_INT_20 | Graph viz | **Done** | prism-llm | intelligence.rs | 2 unit | Day 25 |
+| SR_INT_21 | Agent feedback loop | **Done** | prism-llm | intelligence.rs | 2 unit | Day 25 |
+| SR_INT_22 | Cross-tenant learning | **Done** | prism-llm | intelligence.rs | 3 unit | Day 25 |
+| SR_INT_23 | Query rewrite | **Done** | prism-llm | intelligence.rs | 2 unit | Day 25 |
+| SR_INT_24 | Proactive triggers | **Done** | prism-llm | intelligence.rs | 3 unit | Day 25 |
+| SR_INT_25 | Maintenance orchestrator | **Done** | prism-llm | intelligence.rs | 2 unit | Day 25 |
+| SR_INT_26 | Query cost estimator | **Done** | prism-llm | intelligence.rs | 3 unit | Day 25 |
+| SR_INT_27 | Bulk import worker | **Done** | prism-llm | intelligence.rs | 1 unit | Day 25 |
+| SR_INT_28 | Read-through cache | **Done** | prism-llm | intelligence.rs | 3 unit | Day 25 |
+| SR_INT_29 | DR drills | **Done** | prism-llm | intelligence.rs | 3 unit | Day 25 |
+| SR_INT_30 | Tenant offboarding | **Done** | prism-llm | intelligence.rs | 3 unit | Day 25 |
 | **REUSABLE** | MerkleChainHasher | **Done** | prism-audit | merkle_chain.rs | 7 unit | Day 2 |
 | **REUSABLE** | AuditLogger | **Done** | prism-audit | event_store.rs | 7 unit | Day 2 |
 | **REUSABLE** | TenantFilter | **Done** | prism-core | tenant_filter.rs | 3 unit | Day 4 |

@@ -586,3 +586,62 @@ pub enum SourceLayer {
     Runtime,
     Interface,
 }
+
+// ============================================================================
+// Intelligence Layer enums (SR_INT_16 .. SR_INT_30)
+// ============================================================================
+
+/// Type of impact traced by Cascade Impact Analysis (D-47).
+/// Implements: SR_INT_16
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CiaImpactType {
+    /// Nodes that feed into the source (root causes).
+    Upstream,
+    /// Nodes that consume from the source (dependents).
+    Downstream,
+    /// Nodes sharing parents but not directly connected.
+    Lateral,
+    /// Impacts reached via more than one hop of propagation.
+    SecondOrder,
+}
+
+/// Proactive trigger type evaluated by SR_INT_24 (D-60).
+/// Implements: SR_INT_24
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProactiveTriggerType {
+    ThresholdCrossing,
+    PatternChange,
+    Anomaly,
+    ExternalEvent,
+    ForecastHorizon,
+    DataQualityIssue,
+    CoverageGap,
+    LearningLoop,
+}
+
+/// Disaster recovery scenarios covered by SR_INT_29 drills
+/// (per SR_SCALE_40 target table).
+/// Implements: SR_INT_29
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DrScenario {
+    Neo4jPrimaryFail,
+    Neo4jClusterLoss,
+    PostgresFailover,
+    BothStoresLost,
+    EventBusFailure,
+}
+
+/// Kind of agent subject to the Agent Performance Feedback Loop (D-51).
+/// Implements: SR_INT_21
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentKind {
+    Tagging,
+    Routing,
+    Research,
+    Quality,
+    Discovery,
+}

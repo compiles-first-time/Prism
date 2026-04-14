@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use super::entities::{ProcessCandidate, SearchResult};
+use super::entities::{CiaTree, ProcessCandidate, SearchResult};
 use super::enums::*;
 use super::identifiers::*;
 
@@ -2277,4 +2277,258 @@ pub struct SemanticSearchResult {
     pub results: Vec<SearchResult>,
     pub filtered_count: usize,
     pub dropped_for_compartment_count: usize,
+}
+
+// ============================================================================
+// Intelligence Layer request / result types (SR_INT_16 .. SR_INT_30)
+// ============================================================================
+
+/// Input for a Cascade Impact Analysis traversal (D-47).
+/// Implements: SR_INT_16
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CiaRequest {
+    pub tenant_id: TenantId,
+    pub source_node: String,
+    pub depth: u32,
+    pub include_confidence: bool,
+}
+
+/// Result of a Cascade Impact Analysis traversal.
+/// Implements: SR_INT_16
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CiaResult {
+    pub tree: CiaTree,
+    pub coverage_disclosure: String,
+}
+
+/// Input for a Semantic Disambiguation Agent run (D-53).
+/// Implements: SR_INT_17
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SdaRunRequest {
+    pub tenant_id: TenantId,
+}
+
+/// Result of a Semantic Disambiguation Agent run.
+/// Implements: SR_INT_17
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SdaResult {
+    pub added: u32,
+    pub modified: u32,
+}
+
+/// Input for decision support data gathering.
+/// Implements: SR_INT_18
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataGatheringInput {
+    pub tenant_id: TenantId,
+    pub query: String,
+    pub parameters: serde_json::Value,
+}
+
+/// Result of decision support data gathering with freshness and CSA decision.
+/// Implements: SR_INT_18
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataGatheringResult {
+    pub data: serde_json::Value,
+    pub freshness_seconds: u64,
+    pub gaps: Vec<String>,
+    pub csa_decision: String,
+}
+
+/// Input for a Research Agent run (D-46).
+/// Implements: SR_INT_19
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResearchInput {
+    pub tenant_id: TenantId,
+    pub topics: Vec<String>,
+}
+
+/// Result of a Research Agent run: list of DataCollection ids created.
+/// Implements: SR_INT_19
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResearchResult {
+    pub collection_ids: Vec<uuid::Uuid>,
+}
+
+/// Input for a graph visualization sub-graph query.
+/// Implements: SR_INT_20
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphVizRequest {
+    pub tenant_id: TenantId,
+    pub focal_node: String,
+    pub depth: u32,
+}
+
+/// Result: a bounded subgraph of nodes and directed edges.
+/// Implements: SR_INT_20
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphVizResult {
+    pub nodes: Vec<String>,
+    pub edges: Vec<(String, String, String)>,
+}
+
+/// Input for the Agent Performance Feedback Loop cycle (D-51).
+/// Implements: SR_INT_21
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentFeedbackCycleRequest {
+    pub tenant_id: TenantId,
+}
+
+/// Result of one Agent Performance Feedback Loop cycle.
+/// Implements: SR_INT_21
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentFeedbackResult {
+    pub agents_evaluated: u32,
+    pub improvements: Vec<String>,
+}
+
+/// Input for cross-tenant aggregation (opt-in only per BP-31).
+/// Implements: SR_INT_22
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossTenantAggregationInput {
+    pub tenant_ids: Vec<TenantId>,
+    pub opt_in_verified_at: DateTime<Utc>,
+}
+
+/// Result of a cross-tenant aggregation pass.
+/// Implements: SR_INT_22
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossTenantAggregationResult {
+    pub patterns: Vec<String>,
+    pub opt_in_state: String,
+}
+
+/// Input for the intelligence query rewriter (IL-1).
+/// Implements: SR_INT_23
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryInput {
+    pub tenant_id: TenantId,
+    pub raw_cypher: String,
+    pub principal_id: UserId,
+}
+
+/// Result of an intelligence query rewrite.
+/// Implements: SR_INT_23
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryIntelligenceRewrite {
+    pub rewritten_query: String,
+    pub applied_filters: Vec<String>,
+}
+
+/// Input for the proactive trigger evaluator (D-60).
+/// Implements: SR_INT_24
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProactiveTriggerRequest {
+    pub tenant_id: TenantId,
+    pub trigger_type: ProactiveTriggerType,
+}
+
+/// Result of a proactive trigger evaluation.
+/// Implements: SR_INT_24
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProactiveTriggerFireResult {
+    pub triggers_fired: u32,
+}
+
+/// Input for the intelligence maintenance scheduler.
+/// Implements: SR_INT_25
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntelligenceMaintenanceRequest {
+    pub tenant_id: Option<TenantId>,
+    pub cycle_type: MaintenanceCycleType,
+}
+
+/// Result of an intelligence maintenance cycle.
+/// Implements: SR_INT_25
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntelligenceMaintenanceResult {
+    pub cycles_run: u32,
+    pub anomalies: Vec<String>,
+}
+
+/// Input for the query cost estimator.
+/// Implements: SR_INT_26
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostEstimateInput {
+    pub tenant_id: TenantId,
+    pub query: String,
+}
+
+/// Result of a query cost estimate, including quota remaining.
+/// Implements: SR_INT_26
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostEstimateResult {
+    pub allowed: bool,
+    pub estimated_cost_ms: u64,
+    pub quota_remaining: u64,
+}
+
+/// Input for a bulk-import worker dispatch.
+/// Implements: SR_INT_27
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BulkImportProcessingInput {
+    pub tenant_id: TenantId,
+    pub import_id: uuid::Uuid,
+}
+
+/// Result of a bulk-import worker dispatch.
+/// Implements: SR_INT_27
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BulkImportProcessingResult {
+    pub processed: u64,
+}
+
+/// Input for the read-through cache query with optional degradation mode.
+/// Implements: SR_INT_28
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheRequest {
+    pub tenant_id: TenantId,
+    pub key: String,
+    pub ttl_seconds: u64,
+    pub degradation_mode: bool,
+}
+
+/// Response from the read-through cache with source attribution and staleness.
+/// Implements: SR_INT_28
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheResponse {
+    pub source: String,
+    pub freshness_seconds: u64,
+    pub degradation_active: bool,
+}
+
+/// Input for a scheduled DR drill.
+/// Implements: SR_INT_29
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DrDrillRequest {
+    pub scenario: DrScenario,
+    pub target_rto_seconds: u64,
+    pub target_rpo_seconds: u64,
+}
+
+/// Result of a DR drill with measured RTO/RPO and escalation if failed.
+/// Implements: SR_INT_29
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DrDrillResult {
+    pub passed: bool,
+    pub measured_rto_seconds: u64,
+    pub measured_rpo_seconds: u64,
+    pub escalation_id: Option<String>,
+}
+
+/// Input for a tenant offboarding operation.
+/// Implements: SR_INT_30
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OffboardingRequest {
+    pub tenant_id: TenantId,
+    pub confirm_all_subjects: bool,
+}
+
+/// Result of a tenant offboarding, including certificate and shred proofs.
+/// Implements: SR_INT_30
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OffboardingResult {
+    pub certificate_url: String,
+    pub shred_certificates: Vec<String>,
+    pub verified: bool,
 }

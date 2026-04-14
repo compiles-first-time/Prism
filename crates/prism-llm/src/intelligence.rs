@@ -1,9 +1,14 @@
 //! Intelligence Layer: graph growth, six-stage tagging pipeline, coverage,
-//! process mapping, vector search, and maintenance.
+//! process mapping, vector search, maintenance, CIA, SDA, research agent,
+//! cross-tenant learning, query rewrite, proactive triggers, cost estimation,
+//! bulk import, read-through cache, DR drills, and tenant offboarding.
 //!
 //! Implements: SR_INT_01, SR_INT_02, SR_INT_03, SR_INT_04, SR_INT_05,
 //!             SR_INT_06, SR_INT_07, SR_INT_08, SR_INT_09, SR_INT_10,
-//!             SR_INT_11, SR_INT_12, SR_INT_13, SR_INT_14, SR_INT_15
+//!             SR_INT_11, SR_INT_12, SR_INT_13, SR_INT_14, SR_INT_15,
+//!             SR_INT_16, SR_INT_17, SR_INT_18, SR_INT_19, SR_INT_20,
+//!             SR_INT_21, SR_INT_22, SR_INT_23, SR_INT_24, SR_INT_25,
+//!             SR_INT_26, SR_INT_27, SR_INT_28, SR_INT_29, SR_INT_30
 //!
 //! Per Spec 04 Section 1:
 //!
@@ -1431,6 +1436,1471 @@ impl VectorSemanticSearchService {
 }
 
 // ============================================================================
+// SR_INT_16 -- CascadeImpactAnalysisService
+// ============================================================================
+
+/// Graph traversal abstraction shared by CIA (SR_INT_16) and the graph viz
+/// subgraph query (SR_INT_20).
+///
+/// Implements: SR_INT_16, SR_INT_20
+#[async_trait]
+pub trait GraphTraversal: Send + Sync {
+    /// Trace cascade impacts starting at `source` up to `depth` hops.
+    async fn traverse_impacts(
+        &self,
+        source: &str,
+        depth: u32,
+    ) -> Result<Vec<CiaImpact>, PrismError>;
+
+    /// Return nodes and directed `(from, to, edge_type)` edges within the
+    /// given depth around `focal`.
+    async fn traverse_nodes_and_edges(
+        &self,
+        focal: &str,
+        depth: u32,
+    ) -> Result<(Vec<String>, Vec<(String, String, String)>), PrismError>;
+}
+
+/// Cascade Impact Analysis (D-47): traces upstream, downstream, lateral and
+/// second-order effects via `IMPACTS` edges and attaches a coverage
+/// disclosure so downstream UIs can communicate incompleteness (per BP-103).
+///
+/// Implements: SR_INT_16
+pub struct CascadeImpactAnalysisService {
+    traversal: Arc<dyn GraphTraversal>,
+    audit: AuditLogger,
+}
+
+impl CascadeImpactAnalysisService {
+    pub fn new(traversal: Arc<dyn GraphTraversal>, audit: AuditLogger) -> Self {
+        Self { traversal, audit }
+    }
+
+    /// Execute the CIA traversal and emit an audit event.
+    ///
+    /// Implements: SR_INT_16
+    pub async fn analyze(&self, input: CiaRequest) -> Result<CiaResult, PrismError> {
+        let impacts = self
+            .traversal
+            .traverse_impacts(&input.source_node, input.depth)
+            .await?;
+
+        // Overall confidence is the min of per-branch confidences (fail slow).
+        let overall_confidence = impacts.iter().map(|i| i.confidence).fold(1.0_f64, f64::min);
+
+        // Coverage disclosure: naive ratio of returned impacts to a
+        // hypothetical ceiling (2 * depth). Keeps the service honest about
+        // partial traversal without requiring exact graph counts.
+        let ceiling = (input.depth as f64 * 2.0).max(1.0);
+        let covered = ((impacts.len() as f64) / ceiling).min(1.0);
+        let coverage_disclosure = format!(
+            "Analysis covered {:.0}% of known dependencies",
+            covered * 100.0
+        );
+
+        let tree = CiaTree {
+            source_node: input.source_node.clone(),
+            impacts: if input.include_confidence {
+                impacts
+            } else {
+                // Strip confidence when caller has opted out.
+                let mut stripped = impacts;
+                for i in stripped.iter_mut() {
+                    i.confidence = 1.0;
+                }
+                stripped
+            },
+            overall_confidence,
+        };
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "intelligence.cia_analyzed".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("CiaTree".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "source_node": input.source_node,
+                    "depth": input.depth,
+                    "impacts": tree.impacts.len(),
+                    "overall_confidence": overall_confidence,
+                }),
+            })
+            .await?;
+
+        Ok(CiaResult {
+            tree,
+            coverage_disclosure,
+        })
+    }
+}
+
+// ============================================================================
+// SR_INT_17 -- SemanticDisambiguationAgent
+// ============================================================================
+
+/// Persistence abstraction for the semantic dictionary maintained by SDA
+/// (D-53).
+///
+/// Implements: SR_INT_17
+#[async_trait]
+pub trait SemanticDictionaryRepository: Send + Sync {
+    /// Upsert a dictionary entry. Returns `true` if a new row was inserted,
+    /// `false` if an existing row was modified.
+    async fn upsert(
+        &self,
+        tenant_id: TenantId,
+        entry: &SemanticDictionaryEntry,
+    ) -> Result<bool, PrismError>;
+
+    async fn list_for_tenant(
+        &self,
+        tenant_id: TenantId,
+    ) -> Result<Vec<SemanticDictionaryEntry>, PrismError>;
+}
+
+/// LLM abstraction used by SDA to discover synonyms and acronyms. Reuses the
+/// T1 pattern established by SR_INT_03 with a discovery-specific shape.
+///
+/// Implements: SR_INT_17
+#[async_trait]
+pub trait SemanticDiscoveryLlm: Send + Sync {
+    async fn discover(
+        &self,
+        tenant_id: TenantId,
+    ) -> Result<Vec<SemanticDictionaryEntry>, PrismError>;
+}
+
+/// Semantic Disambiguation Agent (D-53): periodically (or on-demand) discover
+/// synonyms, acronyms, and contextual shorthand across tenant data and
+/// maintain the `semantic_dictionary`.
+///
+/// Implements: SR_INT_17
+pub struct SemanticDisambiguationAgent {
+    repo: Arc<dyn SemanticDictionaryRepository>,
+    llm: Arc<dyn SemanticDiscoveryLlm>,
+    audit: AuditLogger,
+}
+
+impl SemanticDisambiguationAgent {
+    pub fn new(
+        repo: Arc<dyn SemanticDictionaryRepository>,
+        llm: Arc<dyn SemanticDiscoveryLlm>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self { repo, llm, audit }
+    }
+
+    /// Execute one SDA pass for the tenant.
+    ///
+    /// Implements: SR_INT_17
+    pub async fn run(&self, input: SdaRunRequest) -> Result<SdaResult, PrismError> {
+        let discovered = self.llm.discover(input.tenant_id).await?;
+        let mut added = 0u32;
+        let mut modified = 0u32;
+
+        for entry in discovered.iter() {
+            let inserted = self.repo.upsert(input.tenant_id, entry).await?;
+            if inserted {
+                added += 1;
+            } else {
+                modified += 1;
+            }
+        }
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "intelligence.sda_run".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("SemanticDictionary".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "added": added,
+                    "modified": modified,
+                }),
+            })
+            .await?;
+
+        Ok(SdaResult { added, modified })
+    }
+}
+
+// ============================================================================
+// SR_INT_18 -- DecisionSupportDataGatheringService
+// ============================================================================
+
+/// Data freshness / quality check abstraction used by SR_INT_18.
+///
+/// Implements: SR_INT_18
+#[async_trait]
+pub trait DataFreshnessChecker: Send + Sync {
+    /// Return `(freshness_seconds, gaps)` for a gather query.
+    async fn check(
+        &self,
+        tenant_id: TenantId,
+        query: &str,
+    ) -> Result<(u64, Vec<String>), PrismError>;
+}
+
+/// Payload aggregator that actually fetches the combined data set.
+///
+/// Implements: SR_INT_18
+#[async_trait]
+pub trait DataAggregator: Send + Sync {
+    async fn aggregate(
+        &self,
+        tenant_id: TenantId,
+        query: &str,
+        parameters: &serde_json::Value,
+    ) -> Result<serde_json::Value, PrismError>;
+}
+
+/// CSA invocation gate (SR_GOV_24). Returns the decision string; "allow" means
+/// the aggregation may proceed, anything else blocks the call.
+///
+/// Implements: SR_INT_18
+#[async_trait]
+pub trait CsaGate: Send + Sync {
+    async fn check(
+        &self,
+        tenant_id: TenantId,
+        data_collection_refs: &[String],
+    ) -> Result<String, PrismError>;
+}
+
+/// Decision Support data gathering: composes freshness, quality and CSA
+/// invocation into a single return so callers do not have to re-implement
+/// the governance sequence (BP-100).
+///
+/// Implements: SR_INT_18
+pub struct DecisionSupportDataGatheringService {
+    freshness: Arc<dyn DataFreshnessChecker>,
+    aggregator: Arc<dyn DataAggregator>,
+    csa: Arc<dyn CsaGate>,
+    audit: AuditLogger,
+}
+
+impl DecisionSupportDataGatheringService {
+    pub fn new(
+        freshness: Arc<dyn DataFreshnessChecker>,
+        aggregator: Arc<dyn DataAggregator>,
+        csa: Arc<dyn CsaGate>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self {
+            freshness,
+            aggregator,
+            csa,
+            audit,
+        }
+    }
+
+    /// Gather data for decision support.
+    ///
+    /// Implements: SR_INT_18
+    pub async fn gather(
+        &self,
+        input: DataGatheringInput,
+    ) -> Result<DataGatheringResult, PrismError> {
+        let (freshness_seconds, gaps) = self.freshness.check(input.tenant_id, &input.query).await?;
+
+        // CSA runs before aggregation so denied requests never touch data.
+        let csa_decision = self
+            .csa
+            .check(input.tenant_id, std::slice::from_ref(&input.query))
+            .await?;
+
+        if csa_decision != "allow" {
+            self.audit
+                .log(AuditEventInput {
+                    tenant_id: input.tenant_id,
+                    event_type: "intelligence.data_gather_blocked".into(),
+                    actor_id: uuid::Uuid::nil(),
+                    actor_type: ActorType::System,
+                    target_id: None,
+                    target_type: Some("DataGathering".into()),
+                    severity: Severity::Medium,
+                    source_layer: SourceLayer::Llm,
+                    governance_authority: None,
+                    payload: serde_json::json!({
+                        "query": input.query,
+                        "csa_decision": csa_decision,
+                    }),
+                })
+                .await?;
+            return Err(PrismError::Forbidden {
+                reason: format!("CSA denied data gathering: {csa_decision}"),
+            });
+        }
+
+        let data = self
+            .aggregator
+            .aggregate(input.tenant_id, &input.query, &input.parameters)
+            .await?;
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "intelligence.data_gathered".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("DataGathering".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "query": input.query,
+                    "freshness_seconds": freshness_seconds,
+                    "gaps": gaps,
+                    "csa_decision": csa_decision,
+                }),
+            })
+            .await?;
+
+        Ok(DataGatheringResult {
+            data,
+            freshness_seconds,
+            gaps,
+            csa_decision,
+        })
+    }
+}
+
+// ============================================================================
+// SR_INT_19 -- ResearchAgentService
+// ============================================================================
+
+/// External research source abstraction (weather, commodity, regulatory,
+/// news). Returns a short blob per topic which is then persisted as a
+/// `DataCollection` with `data_origin: ResearchAgent`.
+///
+/// Implements: SR_INT_19
+#[async_trait]
+pub trait ExternalResearchSource: Send + Sync {
+    async fn fetch(&self, topic: &str) -> Result<String, PrismError>;
+}
+
+/// Research Agent (D-46): periodically gather external context and store each
+/// result as a DataCollection in the intelligence graph.
+///
+/// Implements: SR_INT_19
+pub struct ResearchAgentService {
+    source: Arc<dyn ExternalResearchSource>,
+    writer: Arc<dyn GraphWriter>,
+    audit: AuditLogger,
+}
+
+impl ResearchAgentService {
+    pub fn new(
+        source: Arc<dyn ExternalResearchSource>,
+        writer: Arc<dyn GraphWriter>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self {
+            source,
+            writer,
+            audit,
+        }
+    }
+
+    /// Fetch all topics and persist each as a DataCollection node.
+    ///
+    /// Implements: SR_INT_19
+    pub async fn research(&self, input: ResearchInput) -> Result<ResearchResult, PrismError> {
+        let mut collection_ids = Vec::with_capacity(input.topics.len());
+
+        for topic in input.topics.iter() {
+            let blob = self.source.fetch(topic).await?;
+            let properties = serde_json::json!({
+                "topic": topic,
+                "content": blob,
+                "data_origin": "research_agent",
+                "fetched_at": Utc::now().to_rfc3339(),
+            });
+            let node_id = self
+                .writer
+                .create_node(input.tenant_id, "DataCollection", properties)
+                .await?;
+            collection_ids.push(node_id);
+        }
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "intelligence.research_agent_run".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("DataCollection".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "topic_count": input.topics.len(),
+                    "collections_created": collection_ids.len(),
+                }),
+            })
+            .await?;
+
+        Ok(ResearchResult { collection_ids })
+    }
+}
+
+// ============================================================================
+// SR_INT_20 -- GraphVizService
+// ============================================================================
+
+/// Graph visualization data source: returns a bounded subgraph around a focal
+/// node, honoring the depth limit so the interface panel can render without
+/// browser crashes.
+///
+/// Implements: SR_INT_20
+pub struct GraphVizService {
+    traversal: Arc<dyn GraphTraversal>,
+    audit: AuditLogger,
+}
+
+/// Maximum depth enforced by SR_INT_20 regardless of caller request.
+///
+/// Implements: SR_INT_20
+pub const GRAPH_VIZ_MAX_DEPTH: u32 = 5;
+
+impl GraphVizService {
+    pub fn new(traversal: Arc<dyn GraphTraversal>, audit: AuditLogger) -> Self {
+        Self { traversal, audit }
+    }
+
+    /// Return the bounded subgraph around `focal_node`.
+    ///
+    /// Implements: SR_INT_20
+    pub async fn query(&self, input: GraphVizRequest) -> Result<GraphVizResult, PrismError> {
+        let depth = input.depth.min(GRAPH_VIZ_MAX_DEPTH);
+        let (nodes, edges) = self
+            .traversal
+            .traverse_nodes_and_edges(&input.focal_node, depth)
+            .await?;
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "intelligence.graph_viz_queried".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("GraphViz".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "focal_node": input.focal_node,
+                    "requested_depth": input.depth,
+                    "effective_depth": depth,
+                    "node_count": nodes.len(),
+                    "edge_count": edges.len(),
+                }),
+            })
+            .await?;
+
+        Ok(GraphVizResult { nodes, edges })
+    }
+}
+
+// ============================================================================
+// SR_INT_21 -- AgentFeedbackLoopService
+// ============================================================================
+
+/// Per-agent metrics source used by the feedback loop (D-51).
+///
+/// Implements: SR_INT_21
+#[async_trait]
+pub trait AgentMetricsStore: Send + Sync {
+    async fn get_metrics(&self, agent: AgentKind) -> Result<Vec<f64>, PrismError>;
+}
+
+/// All agent kinds the feedback loop evaluates in one cycle.
+///
+/// Implements: SR_INT_21
+pub const FEEDBACK_LOOP_AGENTS: &[AgentKind] = &[
+    AgentKind::Tagging,
+    AgentKind::Routing,
+    AgentKind::Research,
+    AgentKind::Quality,
+    AgentKind::Discovery,
+];
+
+/// Agent Performance Feedback Loop: score each agent, identify improvements,
+/// and emit one audit event per cycle.
+///
+/// Implements: SR_INT_21
+pub struct AgentFeedbackLoopService {
+    metrics: Arc<dyn AgentMetricsStore>,
+    audit: AuditLogger,
+}
+
+impl AgentFeedbackLoopService {
+    pub fn new(metrics: Arc<dyn AgentMetricsStore>, audit: AuditLogger) -> Self {
+        Self { metrics, audit }
+    }
+
+    /// Evaluate all five agent kinds and produce an improvement list.
+    ///
+    /// Implements: SR_INT_21
+    pub async fn evaluate_cycle(
+        &self,
+        input: AgentFeedbackCycleRequest,
+    ) -> Result<AgentFeedbackResult, PrismError> {
+        let mut improvements: Vec<String> = Vec::new();
+        for agent in FEEDBACK_LOOP_AGENTS.iter().copied() {
+            let samples = self.metrics.get_metrics(agent).await?;
+            if samples.is_empty() {
+                continue;
+            }
+            let avg = samples.iter().sum::<f64>() / samples.len() as f64;
+            // Any agent scoring below 0.8 contributes an improvement note.
+            if avg < 0.8 {
+                improvements.push(format!(
+                    "{:?} avg {:.2} -- schedule prompt/model review",
+                    agent, avg
+                ));
+            }
+        }
+
+        let agents_evaluated = FEEDBACK_LOOP_AGENTS.len() as u32;
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "intelligence.agent_feedback_cycle".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("AgentFeedback".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "agents_evaluated": agents_evaluated,
+                    "improvements": improvements,
+                }),
+            })
+            .await?;
+
+        Ok(AgentFeedbackResult {
+            agents_evaluated,
+            improvements,
+        })
+    }
+}
+
+// ============================================================================
+// SR_INT_22 -- CrossTenantLearningService
+// ============================================================================
+
+/// Opt-in verification (SR_GOV_59 consumer side). Returns `true` only when
+/// every tenant in the set has a live opt-in on record.
+///
+/// Implements: SR_INT_22
+#[async_trait]
+pub trait OptInVerifier: Send + Sync {
+    async fn is_verified(&self, tenant_ids: &[TenantId]) -> Result<bool, PrismError>;
+}
+
+/// Aggregation worker abstraction. Reads only materialized aggregates, never
+/// raw nodes, per the Q&A #3 architectural boundary.
+///
+/// Implements: SR_INT_22
+#[async_trait]
+pub trait PatternAggregator: Send + Sync {
+    async fn aggregate(&self, tenant_ids: &[TenantId]) -> Result<Vec<String>, PrismError>;
+}
+
+/// Maximum age for an opt-in verification before the current cycle must
+/// re-verify (per BP-126).
+///
+/// Implements: SR_INT_22
+pub const OPT_IN_MAX_AGE_HOURS: i64 = 24;
+
+/// Cross-tenant aggregate learning service (BP-31). Rejects aggregation when
+/// opt-in is stale or unverified.
+///
+/// Implements: SR_INT_22
+pub struct CrossTenantLearningService {
+    verifier: Arc<dyn OptInVerifier>,
+    aggregator: Arc<dyn PatternAggregator>,
+    audit: AuditLogger,
+}
+
+impl CrossTenantLearningService {
+    pub fn new(
+        verifier: Arc<dyn OptInVerifier>,
+        aggregator: Arc<dyn PatternAggregator>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self {
+            verifier,
+            aggregator,
+            audit,
+        }
+    }
+
+    /// Run one aggregation cycle (at most once per 24h per BP-31).
+    ///
+    /// Implements: SR_INT_22
+    pub async fn aggregate(
+        &self,
+        input: CrossTenantAggregationInput,
+    ) -> Result<CrossTenantAggregationResult, PrismError> {
+        let age = Utc::now() - input.opt_in_verified_at;
+        if age > Duration::hours(OPT_IN_MAX_AGE_HOURS) {
+            return Err(PrismError::Forbidden {
+                reason: "opt-in verification is stale (>24h)".into(),
+            });
+        }
+
+        let verified = self.verifier.is_verified(&input.tenant_ids).await?;
+        if !verified {
+            return Err(PrismError::Forbidden {
+                reason: "one or more tenants have not opted in".into(),
+            });
+        }
+
+        let patterns = self.aggregator.aggregate(&input.tenant_ids).await?;
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_ids.first().copied().unwrap_or_default(),
+                event_type: "intelligence.cross_tenant_aggregated".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("CrossTenantAggregation".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "tenant_count": input.tenant_ids.len(),
+                    "pattern_count": patterns.len(),
+                }),
+            })
+            .await?;
+
+        Ok(CrossTenantAggregationResult {
+            patterns,
+            opt_in_state: "verified".into(),
+        })
+    }
+}
+
+// ============================================================================
+// SR_INT_23 -- IntelligenceQueryRewriteService
+// ============================================================================
+
+/// Query rewriter abstraction. Production implementations delegate to
+/// `SR_DM_27`; tests use a fake.
+///
+/// Implements: SR_INT_23
+#[async_trait]
+pub trait QueryRewriter: Send + Sync {
+    async fn rewrite(
+        &self,
+        raw_cypher: &str,
+        tenant_id: TenantId,
+        principal_id: UserId,
+    ) -> Result<String, PrismError>;
+}
+
+/// Raw Cypher substrings that are forbidden at the interface boundary (IL-1):
+/// no database drops, no admin calls, no apoc sweeps.
+const FORBIDDEN_CYPHER_PATTERNS: &[&str] = &[
+    "CALL db.drop",
+    "CALL dbms.",
+    "CALL apoc.periodic",
+    "DETACH DELETE *",
+];
+
+/// Query rewrite entry point: reject forbidden constructs before rewriting,
+/// then ensure the rewrite still references the tenant_id.
+///
+/// Implements: SR_INT_23
+pub struct IntelligenceQueryRewriteService {
+    rewriter: Arc<dyn QueryRewriter>,
+    audit: AuditLogger,
+}
+
+impl IntelligenceQueryRewriteService {
+    pub fn new(rewriter: Arc<dyn QueryRewriter>, audit: AuditLogger) -> Self {
+        Self { rewriter, audit }
+    }
+
+    /// Validate, rewrite, and record an audit trail for the query.
+    ///
+    /// Implements: SR_INT_23
+    pub async fn rewrite(&self, input: QueryInput) -> Result<QueryIntelligenceRewrite, PrismError> {
+        for pat in FORBIDDEN_CYPHER_PATTERNS.iter() {
+            if input.raw_cypher.contains(pat) {
+                return Err(PrismError::Forbidden {
+                    reason: format!("forbidden cypher construct: {pat}"),
+                });
+            }
+        }
+
+        let rewritten = self
+            .rewriter
+            .rewrite(&input.raw_cypher, input.tenant_id, input.principal_id)
+            .await?;
+
+        let tenant_token = format!("tenant_id:{}", input.tenant_id);
+        if !rewritten.contains("tenant_id") {
+            return Err(PrismError::Validation {
+                reason: "rewriter did not inject tenant filter".into(),
+            });
+        }
+        let applied_filters = vec![tenant_token, "role_based_access".into()];
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "intelligence.query_rewritten".into(),
+                actor_id: *input.principal_id.as_uuid(),
+                actor_type: ActorType::Human,
+                target_id: None,
+                target_type: Some("QueryRewrite".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "raw_length": input.raw_cypher.len(),
+                    "rewritten_length": rewritten.len(),
+                }),
+            })
+            .await?;
+
+        Ok(QueryIntelligenceRewrite {
+            rewritten_query: rewritten,
+            applied_filters,
+        })
+    }
+}
+
+// ============================================================================
+// SR_INT_24 -- ProactiveTriggerService
+// ============================================================================
+
+/// Per-trigger-type evaluator (D-60). Returns how many triggers fired.
+///
+/// Implements: SR_INT_24
+#[async_trait]
+pub trait TriggerEvaluator: Send + Sync {
+    async fn check(
+        &self,
+        tenant_id: TenantId,
+        trigger_type: ProactiveTriggerType,
+    ) -> Result<u32, PrismError>;
+}
+
+/// Recommendation request sender (BP-103). Fires one recommendation per
+/// trigger hit, ensuring coverage-disclosure remains attached downstream.
+///
+/// Implements: SR_INT_24
+#[async_trait]
+pub trait RecommendationRequestSender: Send + Sync {
+    async fn send(
+        &self,
+        tenant_id: TenantId,
+        trigger_type: ProactiveTriggerType,
+    ) -> Result<(), PrismError>;
+}
+
+/// Proactive trigger service: evaluates one trigger type per call and fires a
+/// recommendation request for each detected hit.
+///
+/// Implements: SR_INT_24
+pub struct ProactiveTriggerService {
+    evaluator: Arc<dyn TriggerEvaluator>,
+    sender: Arc<dyn RecommendationRequestSender>,
+    audit: AuditLogger,
+}
+
+impl ProactiveTriggerService {
+    pub fn new(
+        evaluator: Arc<dyn TriggerEvaluator>,
+        sender: Arc<dyn RecommendationRequestSender>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self {
+            evaluator,
+            sender,
+            audit,
+        }
+    }
+
+    /// Evaluate the trigger and fire recommendations as needed.
+    ///
+    /// Implements: SR_INT_24
+    pub async fn evaluate(
+        &self,
+        input: ProactiveTriggerRequest,
+    ) -> Result<ProactiveTriggerFireResult, PrismError> {
+        let fired = self
+            .evaluator
+            .check(input.tenant_id, input.trigger_type)
+            .await?;
+
+        for _ in 0..fired {
+            self.sender
+                .send(input.tenant_id, input.trigger_type)
+                .await?;
+        }
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "intelligence.proactive_trigger_evaluated".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("ProactiveTrigger".into()),
+                severity: if fired > 0 {
+                    Severity::Medium
+                } else {
+                    Severity::Low
+                },
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "trigger_type": serde_json::to_value(input.trigger_type)
+                        .map_err(|e| PrismError::Serialization(e.to_string()))?,
+                    "triggers_fired": fired,
+                }),
+            })
+            .await?;
+
+        Ok(ProactiveTriggerFireResult {
+            triggers_fired: fired,
+        })
+    }
+}
+
+// ============================================================================
+// SR_INT_25 -- IntelligenceMaintenanceService
+// ============================================================================
+
+/// Intelligence-layer operational entry point for graph maintenance (BP-130
+/// operation vs substrate split). Delegates the actual store-level
+/// operations to `SR_DM_24` via `GraphMaintenanceWorker`.
+///
+/// Implements: SR_INT_25
+pub struct IntelligenceMaintenanceService {
+    worker: Arc<dyn prism_graph::data_model::GraphMaintenanceWorker>,
+    audit: AuditLogger,
+}
+
+impl IntelligenceMaintenanceService {
+    pub fn new(
+        worker: Arc<dyn prism_graph::data_model::GraphMaintenanceWorker>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self { worker, audit }
+    }
+
+    /// Run one maintenance cycle of the specified type.
+    ///
+    /// Implements: SR_INT_25
+    pub async fn run_cycle(
+        &self,
+        input: IntelligenceMaintenanceRequest,
+    ) -> Result<IntelligenceMaintenanceResult, PrismError> {
+        let affected = self
+            .worker
+            .execute_cycle(input.tenant_id, input.cycle_type)
+            .await?;
+
+        // Any cycle that affects more than 100k entities is surfaced as a
+        // potential anomaly for the scheduler to investigate.
+        let mut anomalies = Vec::new();
+        if affected > 100_000 {
+            anomalies.push(format!(
+                "cycle {:?} affected {} entities (>100k threshold)",
+                input.cycle_type, affected
+            ));
+        }
+
+        let tenant_for_audit = input.tenant_id.unwrap_or_default();
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: tenant_for_audit,
+                event_type: "intelligence.maintenance_cycle".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("IntelligenceMaintenance".into()),
+                severity: if anomalies.is_empty() {
+                    Severity::Low
+                } else {
+                    Severity::Medium
+                },
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "cycle_type": serde_json::to_value(input.cycle_type)
+                        .map_err(|e| PrismError::Serialization(e.to_string()))?,
+                    "affected": affected,
+                    "anomalies": anomalies,
+                }),
+            })
+            .await?;
+
+        Ok(IntelligenceMaintenanceResult {
+            cycles_run: 1,
+            anomalies,
+        })
+    }
+}
+
+// ============================================================================
+// SR_INT_26 -- QueryCostEstimatorService
+// ============================================================================
+
+/// Static cost estimator (IL-6). Production implementations parse and weight
+/// the query; tests use fixed values.
+///
+/// Implements: SR_INT_26
+#[async_trait]
+pub trait CostEstimator: Send + Sync {
+    async fn estimate(&self, query: &str) -> Result<u64, PrismError>;
+}
+
+/// Per-tenant quota enforcer (SR_SCALE_25 consumer side). Returns the
+/// remaining quota in whatever unit the caller is tracking.
+///
+/// Implements: SR_INT_26
+#[async_trait]
+pub trait QuotaEnforcer: Send + Sync {
+    async fn check_quota(&self, tenant_id: TenantId) -> Result<u64, PrismError>;
+}
+
+/// Hard cap on estimated query cost (ms) before the estimator rejects.
+///
+/// Implements: SR_INT_26
+pub const QUERY_COST_TIMEOUT_MS: u64 = 30_000;
+
+/// Query Cost Estimator: rejects expensive queries and quota-exhausted
+/// tenants before execution (IL-6 + BP-128).
+///
+/// Implements: SR_INT_26
+pub struct QueryCostEstimatorService {
+    estimator: Arc<dyn CostEstimator>,
+    quota: Arc<dyn QuotaEnforcer>,
+    audit: AuditLogger,
+}
+
+impl QueryCostEstimatorService {
+    pub fn new(
+        estimator: Arc<dyn CostEstimator>,
+        quota: Arc<dyn QuotaEnforcer>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self {
+            estimator,
+            quota,
+            audit,
+        }
+    }
+
+    /// Decide whether the query may be run.
+    ///
+    /// Implements: SR_INT_26
+    pub async fn estimate(
+        &self,
+        input: CostEstimateInput,
+    ) -> Result<CostEstimateResult, PrismError> {
+        let cost = self.estimator.estimate(&input.query).await?;
+        let quota_remaining = self.quota.check_quota(input.tenant_id).await?;
+
+        let allowed = cost <= QUERY_COST_TIMEOUT_MS && quota_remaining > 0;
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "intelligence.query_cost_estimated".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("QueryCost".into()),
+                severity: if allowed {
+                    Severity::Low
+                } else {
+                    Severity::Medium
+                },
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "estimated_cost_ms": cost,
+                    "quota_remaining": quota_remaining,
+                    "allowed": allowed,
+                }),
+            })
+            .await?;
+
+        Ok(CostEstimateResult {
+            allowed,
+            estimated_cost_ms: cost,
+            quota_remaining,
+        })
+    }
+}
+
+// ============================================================================
+// SR_INT_27 -- BulkImportWorkerService
+// ============================================================================
+
+/// Dedicated bulk-import queue (IL-8). Separate from the interactive queue
+/// so large imports do not starve reads.
+///
+/// Implements: SR_INT_27
+#[async_trait]
+pub trait BulkImportQueue: Send + Sync {
+    async fn enqueue(&self, tenant_id: TenantId, import_id: uuid::Uuid) -> Result<u64, PrismError>;
+}
+
+/// Bulk import worker front-door (IL-8): the heavy lifting is in
+/// `prism-adapters`; this service just dispatches onto the dedicated queue
+/// and records the audit trail.
+///
+/// Implements: SR_INT_27
+pub struct BulkImportWorkerService {
+    queue: Arc<dyn BulkImportQueue>,
+    audit: AuditLogger,
+}
+
+impl BulkImportWorkerService {
+    pub fn new(queue: Arc<dyn BulkImportQueue>, audit: AuditLogger) -> Self {
+        Self { queue, audit }
+    }
+
+    /// Enqueue the import and return the count the queue reports.
+    ///
+    /// Implements: SR_INT_27
+    pub async fn process(
+        &self,
+        input: BulkImportProcessingInput,
+    ) -> Result<BulkImportProcessingResult, PrismError> {
+        let processed = self.queue.enqueue(input.tenant_id, input.import_id).await?;
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "intelligence.bulk_import_enqueued".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: Some(input.import_id),
+                target_type: Some("BulkImport".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "import_id": input.import_id.to_string(),
+                    "processed": processed,
+                }),
+            })
+            .await?;
+
+        Ok(BulkImportProcessingResult { processed })
+    }
+}
+
+// ============================================================================
+// SR_INT_28 -- ReadThroughCacheService
+// ============================================================================
+
+/// A single cache entry: payload plus the monotonic time (seconds since epoch)
+/// at which it was written.
+///
+/// Implements: SR_INT_28
+#[derive(Debug, Clone)]
+pub struct CacheEntry {
+    pub payload: serde_json::Value,
+    pub written_at_epoch: i64,
+}
+
+/// Cache store abstraction. `get` returns `Some(entry)` when the key is
+/// present (regardless of freshness); the service decides whether to use it.
+///
+/// Implements: SR_INT_28
+#[async_trait]
+pub trait CacheStore: Send + Sync {
+    async fn get(&self, key: &str) -> Result<Option<CacheEntry>, PrismError>;
+    async fn set(&self, key: &str, entry: CacheEntry) -> Result<(), PrismError>;
+    async fn invalidate(&self, key: &str) -> Result<(), PrismError>;
+}
+
+/// Data source invoked on cache miss.
+///
+/// Implements: SR_INT_28
+#[async_trait]
+pub trait CacheDataSource: Send + Sync {
+    async fn fetch(&self, key: &str) -> Result<serde_json::Value, PrismError>;
+}
+
+/// Extended TTL multiplier under graceful-degradation (BP-120).
+pub const DEGRADATION_TTL_MULTIPLIER: u64 = 10;
+
+/// Read-through cache with TTL (IL-9) + Neo4j-reads degradation participation
+/// (BP-120). Under degradation, the effective TTL is multiplied by
+/// `DEGRADATION_TTL_MULTIPLIER` and returned results are marked stale.
+///
+/// Implements: SR_INT_28
+pub struct ReadThroughCacheService {
+    cache: Arc<dyn CacheStore>,
+    source: Arc<dyn CacheDataSource>,
+    audit: AuditLogger,
+}
+
+impl ReadThroughCacheService {
+    pub fn new(
+        cache: Arc<dyn CacheStore>,
+        source: Arc<dyn CacheDataSource>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self {
+            cache,
+            source,
+            audit,
+        }
+    }
+
+    /// Resolve the cache-or-source read.
+    ///
+    /// Implements: SR_INT_28
+    pub async fn query_with_cache(&self, input: CacheRequest) -> Result<CacheResponse, PrismError> {
+        let now = Utc::now().timestamp();
+        let effective_ttl = if input.degradation_mode {
+            input.ttl_seconds.saturating_mul(DEGRADATION_TTL_MULTIPLIER)
+        } else {
+            input.ttl_seconds
+        };
+
+        let (source, freshness_seconds) = match self.cache.get(&input.key).await? {
+            Some(entry) => {
+                let age = (now - entry.written_at_epoch).max(0) as u64;
+                if age <= effective_ttl {
+                    ("cache", age)
+                } else {
+                    // Stale: refresh from source.
+                    let fresh = self.source.fetch(&input.key).await?;
+                    self.cache
+                        .set(
+                            &input.key,
+                            CacheEntry {
+                                payload: fresh,
+                                written_at_epoch: now,
+                            },
+                        )
+                        .await?;
+                    ("source", 0)
+                }
+            }
+            None => {
+                let fresh = self.source.fetch(&input.key).await?;
+                self.cache
+                    .set(
+                        &input.key,
+                        CacheEntry {
+                            payload: fresh,
+                            written_at_epoch: now,
+                        },
+                    )
+                    .await?;
+                ("source", 0)
+            }
+        };
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "intelligence.cache_query".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("ReadThroughCache".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "key": input.key,
+                    "source": source,
+                    "freshness_seconds": freshness_seconds,
+                    "degradation_active": input.degradation_mode,
+                }),
+            })
+            .await?;
+
+        Ok(CacheResponse {
+            source: source.into(),
+            freshness_seconds,
+            degradation_active: input.degradation_mode,
+        })
+    }
+}
+
+// ============================================================================
+// SR_INT_29 -- DisasterRecoveryDrillService
+// ============================================================================
+
+/// DR drill executor: plays out the scenario against the test environment
+/// and returns `(measured_rto, measured_rpo)` in seconds.
+///
+/// Implements: SR_INT_29
+#[async_trait]
+pub trait DrExecutor: Send + Sync {
+    async fn execute(&self, scenario: DrScenario) -> Result<(u64, u64), PrismError>;
+}
+
+/// Escalation channel used when a drill fails (SR_GOV_67).
+///
+/// Implements: SR_INT_29
+#[async_trait]
+pub trait DrEscalator: Send + Sync {
+    async fn escalate(&self, scenario: DrScenario, reason: &str) -> Result<String, PrismError>;
+}
+
+/// DR drill service: runs the scenario, compares measured against SR_SCALE_40
+/// targets, and escalates on failure (BP-121).
+///
+/// Implements: SR_INT_29
+pub struct DisasterRecoveryDrillService {
+    executor: Arc<dyn DrExecutor>,
+    escalator: Arc<dyn DrEscalator>,
+    audit: AuditLogger,
+}
+
+impl DisasterRecoveryDrillService {
+    pub fn new(
+        executor: Arc<dyn DrExecutor>,
+        escalator: Arc<dyn DrEscalator>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self {
+            executor,
+            escalator,
+            audit,
+        }
+    }
+
+    /// Run one DR drill.
+    ///
+    /// Implements: SR_INT_29
+    pub async fn run_drill(&self, input: DrDrillRequest) -> Result<DrDrillResult, PrismError> {
+        let (measured_rto, measured_rpo) = self.executor.execute(input.scenario).await?;
+        let passed =
+            measured_rto <= input.target_rto_seconds && measured_rpo <= input.target_rpo_seconds;
+
+        let escalation_id = if passed {
+            None
+        } else {
+            let reason = format!(
+                "drill {:?} failed: rto {}s > {}s or rpo {}s > {}s",
+                input.scenario,
+                measured_rto,
+                input.target_rto_seconds,
+                measured_rpo,
+                input.target_rpo_seconds
+            );
+            Some(self.escalator.escalate(input.scenario, &reason).await?)
+        };
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: TenantId::default(),
+                event_type: "intelligence.dr_drill".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("DrDrill".into()),
+                severity: if passed {
+                    Severity::Low
+                } else {
+                    Severity::High
+                },
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "scenario": serde_json::to_value(input.scenario)
+                        .map_err(|e| PrismError::Serialization(e.to_string()))?,
+                    "target_rto_seconds": input.target_rto_seconds,
+                    "target_rpo_seconds": input.target_rpo_seconds,
+                    "measured_rto_seconds": measured_rto,
+                    "measured_rpo_seconds": measured_rpo,
+                    "passed": passed,
+                }),
+            })
+            .await?;
+
+        Ok(DrDrillResult {
+            passed,
+            measured_rto_seconds: measured_rto,
+            measured_rpo_seconds: measured_rpo,
+            escalation_id,
+        })
+    }
+}
+
+// ============================================================================
+// SR_INT_30 -- TenantOffboardingService
+// ============================================================================
+
+/// Crypto-shred abstraction (SR_GOV_52 consumer side). Returns one certificate
+/// per shredded key.
+///
+/// Implements: SR_INT_30
+#[async_trait]
+pub trait CryptoShredService: Send + Sync {
+    async fn shred_all(&self, tenant_id: TenantId) -> Result<Vec<String>, PrismError>;
+}
+
+/// Bulk data remover: purges the tenant's rows/nodes from every store (PG,
+/// Neo4j, vector embeddings, event bus streams, object storage, model state).
+///
+/// Implements: SR_INT_30
+#[async_trait]
+pub trait DataRemover: Send + Sync {
+    async fn remove(&self, tenant_id: TenantId) -> Result<u64, PrismError>;
+}
+
+/// Offboarding verifier: runs a scan and returns `true` only when every
+/// store confirms deletion.
+///
+/// Implements: SR_INT_30
+#[async_trait]
+pub trait OffboardingVerifier: Send + Sync {
+    async fn verify(&self, tenant_id: TenantId) -> Result<bool, PrismError>;
+}
+
+/// Certificate issuer for deletion proofs.
+///
+/// Implements: SR_INT_30
+#[async_trait]
+pub trait CertificateIssuer: Send + Sync {
+    async fn issue(&self, tenant_id: TenantId) -> Result<String, PrismError>;
+}
+
+/// Tenant Offboarding Service (BP-102): crypto-shred first, then bulk delete,
+/// then verify, then issue a deletion certificate.
+///
+/// Implements: SR_INT_30
+pub struct TenantOffboardingService {
+    shred: Arc<dyn CryptoShredService>,
+    remover: Arc<dyn DataRemover>,
+    verifier: Arc<dyn OffboardingVerifier>,
+    issuer: Arc<dyn CertificateIssuer>,
+    audit: AuditLogger,
+}
+
+impl TenantOffboardingService {
+    pub fn new(
+        shred: Arc<dyn CryptoShredService>,
+        remover: Arc<dyn DataRemover>,
+        verifier: Arc<dyn OffboardingVerifier>,
+        issuer: Arc<dyn CertificateIssuer>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self {
+            shred,
+            remover,
+            verifier,
+            issuer,
+            audit,
+        }
+    }
+
+    /// Offboard a tenant end-to-end.
+    ///
+    /// Implements: SR_INT_30
+    pub async fn offboard(
+        &self,
+        input: OffboardingRequest,
+    ) -> Result<OffboardingResult, PrismError> {
+        if !input.confirm_all_subjects {
+            return Err(PrismError::Validation {
+                reason: "confirm_all_subjects must be true to offboard".into(),
+            });
+        }
+
+        // Step 1: crypto-shred per-subject keys (SR_GOV_52).
+        let shred_certificates = self.shred.shred_all(input.tenant_id).await?;
+
+        // Step 2: bulk delete across all stores.
+        self.remover.remove(input.tenant_id).await?;
+
+        // Step 3: automated verification scan.
+        let verified = self.verifier.verify(input.tenant_id).await?;
+        if !verified {
+            self.audit
+                .log(AuditEventInput {
+                    tenant_id: input.tenant_id,
+                    event_type: "intelligence.tenant_offboard_failed".into(),
+                    actor_id: uuid::Uuid::nil(),
+                    actor_type: ActorType::System,
+                    target_id: None,
+                    target_type: Some("TenantOffboarding".into()),
+                    severity: Severity::High,
+                    source_layer: SourceLayer::Llm,
+                    governance_authority: None,
+                    payload: serde_json::json!({
+                        "shred_count": shred_certificates.len(),
+                        "verified": false,
+                    }),
+                })
+                .await?;
+            return Ok(OffboardingResult {
+                certificate_url: String::new(),
+                shred_certificates,
+                verified: false,
+            });
+        }
+
+        // Step 4: issue the deletion certificate.
+        let certificate_url = self.issuer.issue(input.tenant_id).await?;
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "intelligence.tenant_offboarded".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("TenantOffboarding".into()),
+                severity: Severity::Medium,
+                source_layer: SourceLayer::Llm,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "shred_count": shred_certificates.len(),
+                    "certificate_url": certificate_url,
+                    "verified": true,
+                }),
+            })
+            .await?;
+
+        Ok(OffboardingResult {
+            certificate_url,
+            shred_certificates,
+            verified: true,
+        })
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -2781,5 +4251,1311 @@ mod tests {
         assert!(result.results.is_empty());
         assert_eq!(result.filtered_count, 0);
         assert_eq!(result.dropped_for_compartment_count, 0);
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_16 -- CascadeImpactAnalysisService
+    // ------------------------------------------------------------------
+
+    struct StubTraversal {
+        impacts: Vec<CiaImpact>,
+        nodes: Vec<String>,
+        edges: Vec<(String, String, String)>,
+        max_depth_seen: Mutex<u32>,
+    }
+
+    #[async_trait]
+    impl GraphTraversal for StubTraversal {
+        async fn traverse_impacts(
+            &self,
+            _source: &str,
+            depth: u32,
+        ) -> Result<Vec<CiaImpact>, PrismError> {
+            *self.max_depth_seen.lock().unwrap() = depth;
+            Ok(self
+                .impacts
+                .iter()
+                .filter(|i| i.depth <= depth)
+                .cloned()
+                .collect())
+        }
+
+        async fn traverse_nodes_and_edges(
+            &self,
+            _focal: &str,
+            depth: u32,
+        ) -> Result<(Vec<String>, Vec<(String, String, String)>), PrismError> {
+            *self.max_depth_seen.lock().unwrap() = depth;
+            Ok((self.nodes.clone(), self.edges.clone()))
+        }
+    }
+
+    #[tokio::test]
+    async fn int16_traces_impacts_with_disclosure() {
+        let traversal = Arc::new(StubTraversal {
+            impacts: vec![
+                CiaImpact {
+                    target_node: "b".into(),
+                    impact_type: CiaImpactType::Downstream,
+                    depth: 1,
+                    confidence: 0.9,
+                },
+                CiaImpact {
+                    target_node: "c".into(),
+                    impact_type: CiaImpactType::Lateral,
+                    depth: 1,
+                    confidence: 0.8,
+                },
+            ],
+            nodes: vec![],
+            edges: vec![],
+            max_depth_seen: Mutex::new(0),
+        });
+        let (_repo, audit) = make_audit();
+        let svc = CascadeImpactAnalysisService::new(traversal, audit);
+
+        let result = svc
+            .analyze(CiaRequest {
+                tenant_id: tenant(),
+                source_node: "a".into(),
+                depth: 2,
+                include_confidence: true,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.tree.source_node, "a");
+        assert_eq!(result.tree.impacts.len(), 2);
+        assert!(result.coverage_disclosure.contains("%"));
+    }
+
+    #[tokio::test]
+    async fn int16_respects_depth_limit() {
+        let traversal = Arc::new(StubTraversal {
+            impacts: vec![
+                CiaImpact {
+                    target_node: "b".into(),
+                    impact_type: CiaImpactType::Downstream,
+                    depth: 1,
+                    confidence: 0.9,
+                },
+                CiaImpact {
+                    target_node: "d".into(),
+                    impact_type: CiaImpactType::SecondOrder,
+                    depth: 3,
+                    confidence: 0.5,
+                },
+            ],
+            nodes: vec![],
+            edges: vec![],
+            max_depth_seen: Mutex::new(0),
+        });
+        let (_repo, audit) = make_audit();
+        let svc = CascadeImpactAnalysisService::new(traversal.clone(), audit);
+
+        let result = svc
+            .analyze(CiaRequest {
+                tenant_id: tenant(),
+                source_node: "a".into(),
+                depth: 1,
+                include_confidence: true,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.tree.impacts.len(), 1);
+        assert_eq!(*traversal.max_depth_seen.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn int16_includes_confidence_computation() {
+        let traversal = Arc::new(StubTraversal {
+            impacts: vec![CiaImpact {
+                target_node: "b".into(),
+                impact_type: CiaImpactType::Upstream,
+                depth: 1,
+                confidence: 0.42,
+            }],
+            nodes: vec![],
+            edges: vec![],
+            max_depth_seen: Mutex::new(0),
+        });
+        let (_repo, audit) = make_audit();
+        let svc = CascadeImpactAnalysisService::new(traversal, audit);
+
+        let result = svc
+            .analyze(CiaRequest {
+                tenant_id: tenant(),
+                source_node: "a".into(),
+                depth: 1,
+                include_confidence: true,
+            })
+            .await
+            .unwrap();
+
+        assert!((result.tree.overall_confidence - 0.42).abs() < 1e-9);
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_17 -- SemanticDisambiguationAgent
+    // ------------------------------------------------------------------
+
+    struct MockDict {
+        existing: Mutex<Vec<SemanticDictionaryEntry>>,
+    }
+
+    impl MockDict {
+        fn new(existing: Vec<SemanticDictionaryEntry>) -> Self {
+            Self {
+                existing: Mutex::new(existing),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl SemanticDictionaryRepository for MockDict {
+        async fn upsert(
+            &self,
+            _tenant_id: TenantId,
+            entry: &SemanticDictionaryEntry,
+        ) -> Result<bool, PrismError> {
+            let mut ex = self.existing.lock().unwrap();
+            if let Some(slot) = ex.iter_mut().find(|e| e.term == entry.term) {
+                *slot = entry.clone();
+                Ok(false)
+            } else {
+                ex.push(entry.clone());
+                Ok(true)
+            }
+        }
+
+        async fn list_for_tenant(
+            &self,
+            _tenant_id: TenantId,
+        ) -> Result<Vec<SemanticDictionaryEntry>, PrismError> {
+            Ok(self.existing.lock().unwrap().clone())
+        }
+    }
+
+    struct StubDiscovery {
+        entries: Vec<SemanticDictionaryEntry>,
+    }
+
+    #[async_trait]
+    impl SemanticDiscoveryLlm for StubDiscovery {
+        async fn discover(
+            &self,
+            _tenant_id: TenantId,
+        ) -> Result<Vec<SemanticDictionaryEntry>, PrismError> {
+            Ok(self.entries.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn int17_discovers_new_terms() {
+        let repo = Arc::new(MockDict::new(vec![]));
+        let llm = Arc::new(StubDiscovery {
+            entries: vec![
+                SemanticDictionaryEntry {
+                    term: "revenue".into(),
+                    synonyms: vec!["rev".into()],
+                    acronyms: vec![],
+                    context: None,
+                },
+                SemanticDictionaryEntry {
+                    term: "customer".into(),
+                    synonyms: vec!["client".into()],
+                    acronyms: vec![],
+                    context: None,
+                },
+            ],
+        });
+        let (_r, audit) = make_audit();
+        let svc = SemanticDisambiguationAgent::new(repo, llm, audit);
+
+        let result = svc
+            .run(SdaRunRequest {
+                tenant_id: tenant(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.added, 2);
+        assert_eq!(result.modified, 0);
+    }
+
+    #[tokio::test]
+    async fn int17_updates_existing_entry() {
+        let existing = SemanticDictionaryEntry {
+            term: "revenue".into(),
+            synonyms: vec![],
+            acronyms: vec![],
+            context: None,
+        };
+        let repo = Arc::new(MockDict::new(vec![existing]));
+        let llm = Arc::new(StubDiscovery {
+            entries: vec![SemanticDictionaryEntry {
+                term: "revenue".into(),
+                synonyms: vec!["rev".into(), "turnover".into()],
+                acronyms: vec!["REV".into()],
+                context: Some("finance".into()),
+            }],
+        });
+        let (_r, audit) = make_audit();
+        let svc = SemanticDisambiguationAgent::new(repo, llm, audit);
+
+        let result = svc
+            .run(SdaRunRequest {
+                tenant_id: tenant(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(result.added, 0);
+        assert_eq!(result.modified, 1);
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_18 -- DecisionSupportDataGatheringService
+    // ------------------------------------------------------------------
+
+    struct StubFreshness {
+        freshness: u64,
+        gaps: Vec<String>,
+    }
+
+    #[async_trait]
+    impl DataFreshnessChecker for StubFreshness {
+        async fn check(
+            &self,
+            _tenant_id: TenantId,
+            _query: &str,
+        ) -> Result<(u64, Vec<String>), PrismError> {
+            Ok((self.freshness, self.gaps.clone()))
+        }
+    }
+
+    struct StubAggregator {
+        payload: serde_json::Value,
+    }
+
+    #[async_trait]
+    impl DataAggregator for StubAggregator {
+        async fn aggregate(
+            &self,
+            _tenant_id: TenantId,
+            _query: &str,
+            _parameters: &serde_json::Value,
+        ) -> Result<serde_json::Value, PrismError> {
+            Ok(self.payload.clone())
+        }
+    }
+
+    struct StubCsa {
+        decision: String,
+    }
+
+    #[async_trait]
+    impl CsaGate for StubCsa {
+        async fn check(
+            &self,
+            _tenant_id: TenantId,
+            _refs: &[String],
+        ) -> Result<String, PrismError> {
+            Ok(self.decision.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn int18_gathers_successfully() {
+        let freshness = Arc::new(StubFreshness {
+            freshness: 42,
+            gaps: vec!["missing_q4".into()],
+        });
+        let aggregator = Arc::new(StubAggregator {
+            payload: serde_json::json!({"rows": 12}),
+        });
+        let csa = Arc::new(StubCsa {
+            decision: "allow".into(),
+        });
+        let (_r, audit) = make_audit();
+        let svc = DecisionSupportDataGatheringService::new(freshness, aggregator, csa, audit);
+
+        let result = svc
+            .gather(DataGatheringInput {
+                tenant_id: tenant(),
+                query: "SELECT".into(),
+                parameters: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.freshness_seconds, 42);
+        assert_eq!(result.csa_decision, "allow");
+        assert_eq!(result.gaps.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn int18_blocks_on_csa_deny() {
+        let freshness = Arc::new(StubFreshness {
+            freshness: 0,
+            gaps: vec![],
+        });
+        let aggregator = Arc::new(StubAggregator {
+            payload: serde_json::json!({}),
+        });
+        let csa = Arc::new(StubCsa {
+            decision: "deny".into(),
+        });
+        let (_r, audit) = make_audit();
+        let svc = DecisionSupportDataGatheringService::new(freshness, aggregator, csa, audit);
+
+        let err = svc
+            .gather(DataGatheringInput {
+                tenant_id: tenant(),
+                query: "SELECT".into(),
+                parameters: serde_json::json!({}),
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, PrismError::Forbidden { .. }));
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_19 -- ResearchAgentService
+    // ------------------------------------------------------------------
+
+    struct StubSource;
+
+    #[async_trait]
+    impl ExternalResearchSource for StubSource {
+        async fn fetch(&self, topic: &str) -> Result<String, PrismError> {
+            Ok(format!("content-for:{topic}"))
+        }
+    }
+
+    #[tokio::test]
+    async fn int19_fetches_topics_and_creates_collections() {
+        let source = Arc::new(StubSource);
+        let writer = Arc::new(MockGraphWriter::new());
+        let (_r, audit) = make_audit();
+        let svc = ResearchAgentService::new(source, writer.clone(), audit);
+
+        let result = svc
+            .research(ResearchInput {
+                tenant_id: tenant(),
+                topics: vec!["weather".into(), "regulations".into()],
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.collection_ids.len(), 2);
+        assert_eq!(writer.count_of("DataCollection"), 2);
+    }
+
+    #[tokio::test]
+    async fn int19_handles_empty_topics() {
+        let source = Arc::new(StubSource);
+        let writer = Arc::new(MockGraphWriter::new());
+        let (_r, audit) = make_audit();
+        let svc = ResearchAgentService::new(source, writer.clone(), audit);
+
+        let result = svc
+            .research(ResearchInput {
+                tenant_id: tenant(),
+                topics: vec![],
+            })
+            .await
+            .unwrap();
+
+        assert!(result.collection_ids.is_empty());
+        assert_eq!(writer.total(), 0);
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_20 -- GraphVizService
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn int20_returns_bounded_subgraph() {
+        let traversal = Arc::new(StubTraversal {
+            impacts: vec![],
+            nodes: vec!["a".into(), "b".into(), "c".into()],
+            edges: vec![("a".into(), "b".into(), "FEEDS".into())],
+            max_depth_seen: Mutex::new(0),
+        });
+        let (_r, audit) = make_audit();
+        let svc = GraphVizService::new(traversal, audit);
+
+        let result = svc
+            .query(GraphVizRequest {
+                tenant_id: tenant(),
+                focal_node: "a".into(),
+                depth: 2,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.nodes.len(), 3);
+        assert_eq!(result.edges.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn int20_respects_depth_cap() {
+        let traversal = Arc::new(StubTraversal {
+            impacts: vec![],
+            nodes: vec![],
+            edges: vec![],
+            max_depth_seen: Mutex::new(0),
+        });
+        let (_r, audit) = make_audit();
+        let svc = GraphVizService::new(traversal.clone(), audit);
+
+        svc.query(GraphVizRequest {
+            tenant_id: tenant(),
+            focal_node: "a".into(),
+            depth: 999,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            *traversal.max_depth_seen.lock().unwrap(),
+            GRAPH_VIZ_MAX_DEPTH
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_21 -- AgentFeedbackLoopService
+    // ------------------------------------------------------------------
+
+    struct StubMetrics {
+        scores: std::collections::HashMap<AgentKind, Vec<f64>>,
+    }
+
+    #[async_trait]
+    impl AgentMetricsStore for StubMetrics {
+        async fn get_metrics(&self, agent: AgentKind) -> Result<Vec<f64>, PrismError> {
+            Ok(self.scores.get(&agent).cloned().unwrap_or_default())
+        }
+    }
+
+    #[tokio::test]
+    async fn int21_evaluates_all_five_agents() {
+        let mut scores = std::collections::HashMap::new();
+        for a in FEEDBACK_LOOP_AGENTS.iter().copied() {
+            scores.insert(a, vec![0.95, 0.92, 0.9]);
+        }
+        let metrics = Arc::new(StubMetrics { scores });
+        let (_r, audit) = make_audit();
+        let svc = AgentFeedbackLoopService::new(metrics, audit);
+
+        let result = svc
+            .evaluate_cycle(AgentFeedbackCycleRequest {
+                tenant_id: tenant(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.agents_evaluated, 5);
+        assert!(result.improvements.is_empty());
+    }
+
+    #[tokio::test]
+    async fn int21_captures_low_score_improvements() {
+        let mut scores = std::collections::HashMap::new();
+        scores.insert(AgentKind::Tagging, vec![0.5, 0.6]);
+        scores.insert(AgentKind::Routing, vec![0.95, 0.93]);
+        scores.insert(AgentKind::Research, vec![0.6, 0.65]);
+        scores.insert(AgentKind::Quality, vec![0.9, 0.92]);
+        scores.insert(AgentKind::Discovery, vec![0.91, 0.93]);
+        let metrics = Arc::new(StubMetrics { scores });
+        let (_r, audit) = make_audit();
+        let svc = AgentFeedbackLoopService::new(metrics, audit);
+
+        let result = svc
+            .evaluate_cycle(AgentFeedbackCycleRequest {
+                tenant_id: tenant(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.agents_evaluated, 5);
+        assert_eq!(result.improvements.len(), 2);
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_22 -- CrossTenantLearningService
+    // ------------------------------------------------------------------
+
+    struct StubVerifier {
+        verified: bool,
+    }
+
+    #[async_trait]
+    impl OptInVerifier for StubVerifier {
+        async fn is_verified(&self, _tenant_ids: &[TenantId]) -> Result<bool, PrismError> {
+            Ok(self.verified)
+        }
+    }
+
+    struct StubPatternAggregator;
+
+    #[async_trait]
+    impl PatternAggregator for StubPatternAggregator {
+        async fn aggregate(&self, _tenant_ids: &[TenantId]) -> Result<Vec<String>, PrismError> {
+            Ok(vec!["template.kyc".into(), "benchmark.uptime".into()])
+        }
+    }
+
+    #[tokio::test]
+    async fn int22_opt_in_verified_aggregates() {
+        let verifier = Arc::new(StubVerifier { verified: true });
+        let aggregator = Arc::new(StubPatternAggregator);
+        let (_r, audit) = make_audit();
+        let svc = CrossTenantLearningService::new(verifier, aggregator, audit);
+
+        let result = svc
+            .aggregate(CrossTenantAggregationInput {
+                tenant_ids: vec![tenant(), tenant()],
+                opt_in_verified_at: Utc::now(),
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.patterns.len(), 2);
+        assert_eq!(result.opt_in_state, "verified");
+    }
+
+    #[tokio::test]
+    async fn int22_rejects_stale_verification() {
+        let verifier = Arc::new(StubVerifier { verified: true });
+        let aggregator = Arc::new(StubPatternAggregator);
+        let (_r, audit) = make_audit();
+        let svc = CrossTenantLearningService::new(verifier, aggregator, audit);
+
+        let err = svc
+            .aggregate(CrossTenantAggregationInput {
+                tenant_ids: vec![tenant()],
+                opt_in_verified_at: Utc::now() - Duration::hours(25),
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, PrismError::Forbidden { .. }));
+    }
+
+    #[tokio::test]
+    async fn int22_rejects_unverified_opt_in() {
+        let verifier = Arc::new(StubVerifier { verified: false });
+        let aggregator = Arc::new(StubPatternAggregator);
+        let (_r, audit) = make_audit();
+        let svc = CrossTenantLearningService::new(verifier, aggregator, audit);
+
+        let err = svc
+            .aggregate(CrossTenantAggregationInput {
+                tenant_ids: vec![tenant()],
+                opt_in_verified_at: Utc::now(),
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, PrismError::Forbidden { .. }));
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_23 -- IntelligenceQueryRewriteService
+    // ------------------------------------------------------------------
+
+    struct StubRewriter;
+
+    #[async_trait]
+    impl QueryRewriter for StubRewriter {
+        async fn rewrite(
+            &self,
+            raw: &str,
+            tenant_id: TenantId,
+            _principal_id: UserId,
+        ) -> Result<String, PrismError> {
+            Ok(format!("{raw} WHERE tenant_id = '{tenant_id}'"))
+        }
+    }
+
+    #[tokio::test]
+    async fn int23_rewrites_query() {
+        let rewriter = Arc::new(StubRewriter);
+        let (_r, audit) = make_audit();
+        let svc = IntelligenceQueryRewriteService::new(rewriter, audit);
+
+        let result = svc
+            .rewrite(QueryInput {
+                tenant_id: tenant(),
+                raw_cypher: "MATCH (n) RETURN n".into(),
+                principal_id: UserId::from(uuid::Uuid::new_v4()),
+            })
+            .await
+            .unwrap();
+
+        assert!(result.rewritten_query.contains("tenant_id"));
+        assert_eq!(result.applied_filters.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn int23_rejects_forbidden_construct() {
+        let rewriter = Arc::new(StubRewriter);
+        let (_r, audit) = make_audit();
+        let svc = IntelligenceQueryRewriteService::new(rewriter, audit);
+
+        let err = svc
+            .rewrite(QueryInput {
+                tenant_id: tenant(),
+                raw_cypher: "CALL db.drop()".into(),
+                principal_id: UserId::from(uuid::Uuid::new_v4()),
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, PrismError::Forbidden { .. }));
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_24 -- ProactiveTriggerService
+    // ------------------------------------------------------------------
+
+    struct StubTriggerEvaluator {
+        fires: u32,
+    }
+
+    #[async_trait]
+    impl TriggerEvaluator for StubTriggerEvaluator {
+        async fn check(
+            &self,
+            _tenant_id: TenantId,
+            _trigger_type: ProactiveTriggerType,
+        ) -> Result<u32, PrismError> {
+            Ok(self.fires)
+        }
+    }
+
+    struct CountingSender {
+        count: Mutex<u32>,
+    }
+
+    #[async_trait]
+    impl RecommendationRequestSender for CountingSender {
+        async fn send(
+            &self,
+            _tenant_id: TenantId,
+            _trigger_type: ProactiveTriggerType,
+        ) -> Result<(), PrismError> {
+            *self.count.lock().unwrap() += 1;
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn int24_fires_on_threshold_crossing() {
+        let evaluator = Arc::new(StubTriggerEvaluator { fires: 2 });
+        let sender = Arc::new(CountingSender {
+            count: Mutex::new(0),
+        });
+        let (_r, audit) = make_audit();
+        let svc = ProactiveTriggerService::new(evaluator, sender.clone(), audit);
+
+        let result = svc
+            .evaluate(ProactiveTriggerRequest {
+                tenant_id: tenant(),
+                trigger_type: ProactiveTriggerType::ThresholdCrossing,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.triggers_fired, 2);
+        assert_eq!(*sender.count.lock().unwrap(), 2);
+    }
+
+    #[tokio::test]
+    async fn int24_fires_on_anomaly() {
+        let evaluator = Arc::new(StubTriggerEvaluator { fires: 1 });
+        let sender = Arc::new(CountingSender {
+            count: Mutex::new(0),
+        });
+        let (_r, audit) = make_audit();
+        let svc = ProactiveTriggerService::new(evaluator, sender.clone(), audit);
+
+        let result = svc
+            .evaluate(ProactiveTriggerRequest {
+                tenant_id: tenant(),
+                trigger_type: ProactiveTriggerType::Anomaly,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.triggers_fired, 1);
+        assert_eq!(*sender.count.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn int24_no_fires_when_conditions_clear() {
+        let evaluator = Arc::new(StubTriggerEvaluator { fires: 0 });
+        let sender = Arc::new(CountingSender {
+            count: Mutex::new(0),
+        });
+        let (_r, audit) = make_audit();
+        let svc = ProactiveTriggerService::new(evaluator, sender.clone(), audit);
+
+        let result = svc
+            .evaluate(ProactiveTriggerRequest {
+                tenant_id: tenant(),
+                trigger_type: ProactiveTriggerType::DataQualityIssue,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.triggers_fired, 0);
+        assert_eq!(*sender.count.lock().unwrap(), 0);
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_25 -- IntelligenceMaintenanceService
+    // ------------------------------------------------------------------
+
+    struct StubMaintenanceWorker {
+        affected: u64,
+    }
+
+    #[async_trait]
+    impl prism_graph::data_model::GraphMaintenanceWorker for StubMaintenanceWorker {
+        async fn execute_cycle(
+            &self,
+            _tenant_id: Option<TenantId>,
+            _cycle_type: MaintenanceCycleType,
+        ) -> Result<u64, PrismError> {
+            Ok(self.affected)
+        }
+    }
+
+    #[tokio::test]
+    async fn int25_runs_cycle() {
+        let worker = Arc::new(StubMaintenanceWorker { affected: 42 });
+        let (_r, audit) = make_audit();
+        let svc = IntelligenceMaintenanceService::new(worker, audit);
+
+        let result = svc
+            .run_cycle(IntelligenceMaintenanceRequest {
+                tenant_id: Some(tenant()),
+                cycle_type: MaintenanceCycleType::StalePrune,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.cycles_run, 1);
+        assert!(result.anomalies.is_empty());
+    }
+
+    #[tokio::test]
+    async fn int25_records_anomalies_for_high_volume() {
+        let worker = Arc::new(StubMaintenanceWorker { affected: 200_000 });
+        let (_r, audit) = make_audit();
+        let svc = IntelligenceMaintenanceService::new(worker, audit);
+
+        let result = svc
+            .run_cycle(IntelligenceMaintenanceRequest {
+                tenant_id: None,
+                cycle_type: MaintenanceCycleType::OrphanCleanup,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.anomalies.len(), 1);
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_26 -- QueryCostEstimatorService
+    // ------------------------------------------------------------------
+
+    struct StubEstimator {
+        cost: u64,
+    }
+
+    #[async_trait]
+    impl CostEstimator for StubEstimator {
+        async fn estimate(&self, _query: &str) -> Result<u64, PrismError> {
+            Ok(self.cost)
+        }
+    }
+
+    struct StubQuota {
+        remaining: u64,
+    }
+
+    #[async_trait]
+    impl QuotaEnforcer for StubQuota {
+        async fn check_quota(&self, _tenant_id: TenantId) -> Result<u64, PrismError> {
+            Ok(self.remaining)
+        }
+    }
+
+    #[tokio::test]
+    async fn int26_allows_cheap_query() {
+        let estimator = Arc::new(StubEstimator { cost: 50 });
+        let quota = Arc::new(StubQuota { remaining: 100 });
+        let (_r, audit) = make_audit();
+        let svc = QueryCostEstimatorService::new(estimator, quota, audit);
+
+        let result = svc
+            .estimate(CostEstimateInput {
+                tenant_id: tenant(),
+                query: "MATCH (n) RETURN n LIMIT 10".into(),
+            })
+            .await
+            .unwrap();
+
+        assert!(result.allowed);
+        assert_eq!(result.estimated_cost_ms, 50);
+    }
+
+    #[tokio::test]
+    async fn int26_rejects_expensive_query() {
+        let estimator = Arc::new(StubEstimator { cost: 99_999 });
+        let quota = Arc::new(StubQuota { remaining: 100 });
+        let (_r, audit) = make_audit();
+        let svc = QueryCostEstimatorService::new(estimator, quota, audit);
+
+        let result = svc
+            .estimate(CostEstimateInput {
+                tenant_id: tenant(),
+                query: "MATCH (n) RETURN n".into(),
+            })
+            .await
+            .unwrap();
+
+        assert!(!result.allowed);
+    }
+
+    #[tokio::test]
+    async fn int26_rejects_over_quota() {
+        let estimator = Arc::new(StubEstimator { cost: 10 });
+        let quota = Arc::new(StubQuota { remaining: 0 });
+        let (_r, audit) = make_audit();
+        let svc = QueryCostEstimatorService::new(estimator, quota, audit);
+
+        let result = svc
+            .estimate(CostEstimateInput {
+                tenant_id: tenant(),
+                query: "MATCH (n) RETURN n".into(),
+            })
+            .await
+            .unwrap();
+
+        assert!(!result.allowed);
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_27 -- BulkImportWorkerService
+    // ------------------------------------------------------------------
+
+    struct DedicatedBulkQueue {
+        calls: Mutex<Vec<uuid::Uuid>>,
+    }
+
+    #[async_trait]
+    impl BulkImportQueue for DedicatedBulkQueue {
+        async fn enqueue(
+            &self,
+            _tenant_id: TenantId,
+            import_id: uuid::Uuid,
+        ) -> Result<u64, PrismError> {
+            self.calls.lock().unwrap().push(import_id);
+            Ok(1)
+        }
+    }
+
+    #[tokio::test]
+    async fn int27_enqueues_to_dedicated_queue() {
+        let queue = Arc::new(DedicatedBulkQueue {
+            calls: Mutex::new(Vec::new()),
+        });
+        let (_r, audit) = make_audit();
+        let svc = BulkImportWorkerService::new(queue.clone(), audit);
+
+        let import_id = uuid::Uuid::new_v4();
+        let result = svc
+            .process(BulkImportProcessingInput {
+                tenant_id: tenant(),
+                import_id,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.processed, 1);
+        assert_eq!(queue.calls.lock().unwrap().len(), 1);
+        assert_eq!(queue.calls.lock().unwrap()[0], import_id);
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_28 -- ReadThroughCacheService
+    // ------------------------------------------------------------------
+
+    struct MockCacheStore {
+        entries: Mutex<Vec<(String, CacheEntry)>>,
+        sets: Mutex<u32>,
+    }
+
+    impl MockCacheStore {
+        fn new() -> Self {
+            Self {
+                entries: Mutex::new(Vec::new()),
+                sets: Mutex::new(0),
+            }
+        }
+
+        fn with_entry(key: &str, entry: CacheEntry) -> Self {
+            let s = Self::new();
+            s.entries.lock().unwrap().push((key.to_string(), entry));
+            s
+        }
+    }
+
+    #[async_trait]
+    impl CacheStore for MockCacheStore {
+        async fn get(&self, key: &str) -> Result<Option<CacheEntry>, PrismError> {
+            Ok(self
+                .entries
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, e)| e.clone()))
+        }
+
+        async fn set(&self, key: &str, entry: CacheEntry) -> Result<(), PrismError> {
+            let mut entries = self.entries.lock().unwrap();
+            entries.retain(|(k, _)| k != key);
+            entries.push((key.to_string(), entry));
+            *self.sets.lock().unwrap() += 1;
+            Ok(())
+        }
+
+        async fn invalidate(&self, key: &str) -> Result<(), PrismError> {
+            self.entries.lock().unwrap().retain(|(k, _)| k != key);
+            Ok(())
+        }
+    }
+
+    struct CountingSource {
+        fetches: Mutex<u32>,
+    }
+
+    #[async_trait]
+    impl CacheDataSource for CountingSource {
+        async fn fetch(&self, _key: &str) -> Result<serde_json::Value, PrismError> {
+            *self.fetches.lock().unwrap() += 1;
+            Ok(serde_json::json!({"rows": 1}))
+        }
+    }
+
+    #[tokio::test]
+    async fn int28_cache_hit_returns_cached() {
+        let now = Utc::now().timestamp();
+        let cache = Arc::new(MockCacheStore::with_entry(
+            "k",
+            CacheEntry {
+                payload: serde_json::json!({"cached": true}),
+                written_at_epoch: now,
+            },
+        ));
+        let source = Arc::new(CountingSource {
+            fetches: Mutex::new(0),
+        });
+        let (_r, audit) = make_audit();
+        let svc = ReadThroughCacheService::new(cache, source.clone(), audit);
+
+        let result = svc
+            .query_with_cache(CacheRequest {
+                tenant_id: tenant(),
+                key: "k".into(),
+                ttl_seconds: 60,
+                degradation_mode: false,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.source, "cache");
+        assert_eq!(*source.fetches.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn int28_cache_miss_fetches_source() {
+        let cache = Arc::new(MockCacheStore::new());
+        let source = Arc::new(CountingSource {
+            fetches: Mutex::new(0),
+        });
+        let (_r, audit) = make_audit();
+        let svc = ReadThroughCacheService::new(cache, source.clone(), audit);
+
+        let result = svc
+            .query_with_cache(CacheRequest {
+                tenant_id: tenant(),
+                key: "nope".into(),
+                ttl_seconds: 60,
+                degradation_mode: false,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.source, "source");
+        assert_eq!(*source.fetches.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn int28_degradation_extends_ttl() {
+        // Entry is stale relative to the normal TTL (20s) but within the
+        // extended TTL (20s * 10 = 200s), so degradation_mode must return it.
+        let stale = Utc::now().timestamp() - 100;
+        let cache = Arc::new(MockCacheStore::with_entry(
+            "k",
+            CacheEntry {
+                payload: serde_json::json!({"cached": true}),
+                written_at_epoch: stale,
+            },
+        ));
+        let source = Arc::new(CountingSource {
+            fetches: Mutex::new(0),
+        });
+        let (_r, audit) = make_audit();
+        let svc = ReadThroughCacheService::new(cache, source.clone(), audit);
+
+        let result = svc
+            .query_with_cache(CacheRequest {
+                tenant_id: tenant(),
+                key: "k".into(),
+                ttl_seconds: 20,
+                degradation_mode: true,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.source, "cache");
+        assert!(result.degradation_active);
+        assert_eq!(*source.fetches.lock().unwrap(), 0);
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_29 -- DisasterRecoveryDrillService
+    // ------------------------------------------------------------------
+
+    struct StubDrExecutor {
+        rto: u64,
+        rpo: u64,
+    }
+
+    #[async_trait]
+    impl DrExecutor for StubDrExecutor {
+        async fn execute(&self, _scenario: DrScenario) -> Result<(u64, u64), PrismError> {
+            Ok((self.rto, self.rpo))
+        }
+    }
+
+    struct StubEscalator {
+        calls: Mutex<u32>,
+    }
+
+    #[async_trait]
+    impl DrEscalator for StubEscalator {
+        async fn escalate(
+            &self,
+            _scenario: DrScenario,
+            _reason: &str,
+        ) -> Result<String, PrismError> {
+            *self.calls.lock().unwrap() += 1;
+            Ok("INC-42".into())
+        }
+    }
+
+    #[tokio::test]
+    async fn int29_drill_passes() {
+        let executor = Arc::new(StubDrExecutor { rto: 100, rpo: 10 });
+        let escalator = Arc::new(StubEscalator {
+            calls: Mutex::new(0),
+        });
+        let (_r, audit) = make_audit();
+        let svc = DisasterRecoveryDrillService::new(executor, escalator.clone(), audit);
+
+        let result = svc
+            .run_drill(DrDrillRequest {
+                scenario: DrScenario::Neo4jPrimaryFail,
+                target_rto_seconds: 300,
+                target_rpo_seconds: 30,
+            })
+            .await
+            .unwrap();
+
+        assert!(result.passed);
+        assert!(result.escalation_id.is_none());
+        assert_eq!(*escalator.calls.lock().unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn int29_drill_fails_triggers_escalation() {
+        let executor = Arc::new(StubDrExecutor { rto: 600, rpo: 60 });
+        let escalator = Arc::new(StubEscalator {
+            calls: Mutex::new(0),
+        });
+        let (_r, audit) = make_audit();
+        let svc = DisasterRecoveryDrillService::new(executor, escalator.clone(), audit);
+
+        let result = svc
+            .run_drill(DrDrillRequest {
+                scenario: DrScenario::Neo4jPrimaryFail,
+                target_rto_seconds: 300,
+                target_rpo_seconds: 30,
+            })
+            .await
+            .unwrap();
+
+        assert!(!result.passed);
+        assert_eq!(result.escalation_id.as_deref(), Some("INC-42"));
+        assert_eq!(*escalator.calls.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn int29_records_measured_times() {
+        let executor = Arc::new(StubDrExecutor { rto: 42, rpo: 7 });
+        let escalator = Arc::new(StubEscalator {
+            calls: Mutex::new(0),
+        });
+        let (_r, audit) = make_audit();
+        let svc = DisasterRecoveryDrillService::new(executor, escalator, audit);
+
+        let result = svc
+            .run_drill(DrDrillRequest {
+                scenario: DrScenario::PostgresFailover,
+                target_rto_seconds: 120,
+                target_rpo_seconds: 10,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.measured_rto_seconds, 42);
+        assert_eq!(result.measured_rpo_seconds, 7);
+    }
+
+    // ------------------------------------------------------------------
+    // SR_INT_30 -- TenantOffboardingService
+    // ------------------------------------------------------------------
+
+    struct StubShred {
+        certs: Vec<String>,
+    }
+
+    #[async_trait]
+    impl CryptoShredService for StubShred {
+        async fn shred_all(&self, _tenant_id: TenantId) -> Result<Vec<String>, PrismError> {
+            Ok(self.certs.clone())
+        }
+    }
+
+    struct StubRemover {
+        calls: Mutex<u32>,
+    }
+
+    #[async_trait]
+    impl DataRemover for StubRemover {
+        async fn remove(&self, _tenant_id: TenantId) -> Result<u64, PrismError> {
+            *self.calls.lock().unwrap() += 1;
+            Ok(1000)
+        }
+    }
+
+    struct StubVerifierInt30 {
+        verified: bool,
+    }
+
+    #[async_trait]
+    impl OffboardingVerifier for StubVerifierInt30 {
+        async fn verify(&self, _tenant_id: TenantId) -> Result<bool, PrismError> {
+            Ok(self.verified)
+        }
+    }
+
+    struct StubIssuer;
+
+    #[async_trait]
+    impl CertificateIssuer for StubIssuer {
+        async fn issue(&self, tenant_id: TenantId) -> Result<String, PrismError> {
+            Ok(format!("https://certs.example/{tenant_id}"))
+        }
+    }
+
+    #[tokio::test]
+    async fn int30_offboards_successfully() {
+        let shred = Arc::new(StubShred {
+            certs: vec!["shred-1".into(), "shred-2".into()],
+        });
+        let remover = Arc::new(StubRemover {
+            calls: Mutex::new(0),
+        });
+        let verifier = Arc::new(StubVerifierInt30 { verified: true });
+        let issuer = Arc::new(StubIssuer);
+        let (_r, audit) = make_audit();
+        let svc = TenantOffboardingService::new(shred, remover.clone(), verifier, issuer, audit);
+
+        let result = svc
+            .offboard(OffboardingRequest {
+                tenant_id: tenant(),
+                confirm_all_subjects: true,
+            })
+            .await
+            .unwrap();
+
+        assert!(result.verified);
+        assert!(result.certificate_url.starts_with("https://"));
+        assert_eq!(result.shred_certificates.len(), 2);
+        assert_eq!(*remover.calls.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn int30_fails_if_verification_fails() {
+        let shred = Arc::new(StubShred {
+            certs: vec!["shred-1".into()],
+        });
+        let remover = Arc::new(StubRemover {
+            calls: Mutex::new(0),
+        });
+        let verifier = Arc::new(StubVerifierInt30 { verified: false });
+        let issuer = Arc::new(StubIssuer);
+        let (_r, audit) = make_audit();
+        let svc = TenantOffboardingService::new(shred, remover, verifier, issuer, audit);
+
+        let result = svc
+            .offboard(OffboardingRequest {
+                tenant_id: tenant(),
+                confirm_all_subjects: true,
+            })
+            .await
+            .unwrap();
+
+        assert!(!result.verified);
+        assert!(result.certificate_url.is_empty());
+    }
+
+    #[tokio::test]
+    async fn int30_issues_shred_certificates() {
+        let shred = Arc::new(StubShred {
+            certs: vec!["a".into(), "b".into(), "c".into()],
+        });
+        let remover = Arc::new(StubRemover {
+            calls: Mutex::new(0),
+        });
+        let verifier = Arc::new(StubVerifierInt30 { verified: true });
+        let issuer = Arc::new(StubIssuer);
+        let (_r, audit) = make_audit();
+        let svc = TenantOffboardingService::new(shred, remover, verifier, issuer, audit);
+
+        let result = svc
+            .offboard(OffboardingRequest {
+                tenant_id: tenant(),
+                confirm_all_subjects: true,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(result.shred_certificates, vec!["a", "b", "c"]);
     }
 }

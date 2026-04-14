@@ -534,3 +534,47 @@ pub struct SearchResult {
     pub similarity: f64,
     pub compartment_allowed: bool,
 }
+
+// -- Intelligence Layer: Cascade Impact Analysis (SR_INT_16) ----------------
+
+/// A single impact branch from the source node of a CIA traversal.
+/// Implements: SR_INT_16
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CiaImpact {
+    pub target_node: String,
+    pub impact_type: CiaImpactType,
+    pub depth: u32,
+    pub confidence: f64,
+}
+
+/// Full impact tree for a Cascade Impact Analysis request.
+/// Implements: SR_INT_16
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CiaTree {
+    pub source_node: String,
+    pub impacts: Vec<CiaImpact>,
+    pub overall_confidence: f64,
+}
+
+// -- Intelligence Layer: Semantic Dictionary (SR_INT_17) --------------------
+
+/// A single entry in the semantic dictionary (synonyms, acronyms, context)
+/// maintained by the Semantic Disambiguation Agent.
+/// Implements: SR_INT_17
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticDictionaryEntry {
+    pub term: String,
+    pub synonyms: Vec<String>,
+    pub acronyms: Vec<String>,
+    pub context: Option<String>,
+}
+
+// -- Intelligence Layer: DR targets (SR_INT_29) -----------------------------
+
+/// RTO/RPO targets pulled from SR_SCALE_40 for a given DR scenario.
+/// Implements: SR_INT_29
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct DrTargets {
+    pub rto_seconds: u64,
+    pub rpo_seconds: u64,
+}
