@@ -526,6 +526,17 @@ pub enum PaywallDecision {
     ManualExportRequired,
 }
 
+/// Direction classification for a TrendAnalysis over successive DataSnapshots.
+/// Implements: SR_INT_07
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrendDirection {
+    Increasing,
+    Decreasing,
+    Stable,
+    Volatile,
+}
+
 /// Source layer that produced a governance event (SR_GOV_47).
 /// Maps to the architectural layers in the PRISM spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

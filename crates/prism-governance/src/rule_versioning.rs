@@ -806,12 +806,6 @@ mod tests {
     }
 
     impl MockDecisionRepo {
-        fn new() -> Self {
-            Self {
-                decisions: Mutex::new(Vec::new()),
-            }
-        }
-
         fn with_decisions(decisions: Vec<(String, serde_json::Value, String)>) -> Self {
             Self {
                 decisions: Mutex::new(decisions),

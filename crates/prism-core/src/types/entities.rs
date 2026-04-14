@@ -396,3 +396,77 @@ pub struct ComponentInfo {
     pub credential_required: bool,
     pub has_credential: bool,
 }
+
+// -- Intelligence Layer: Semantic Tag (SR_INT_03) ---------------------------
+
+/// A semantic tag inferred by the Stage 3 semantic tagger for a DataField.
+/// Carries the inferred semantic_type, business_domain, unit, context and a
+/// confidence score used by downstream relationship inference and quality
+/// weighting.
+/// Implements: SR_INT_03
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticTag {
+    pub field_id: String,
+    pub semantic_type: String,
+    pub business_domain: Option<String>,
+    pub unit: Option<String>,
+    pub context: Option<String>,
+    pub confidence: f64,
+}
+
+// -- Intelligence Layer: Relationship Candidate (SR_INT_04) -----------------
+
+/// A candidate relationship edge proposed by the Stage 4 relationship
+/// inference pipeline (pattern matcher + T1 LLM).
+/// Implements: SR_INT_04
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelationshipCandidate {
+    pub from_field: String,
+    pub to_field: String,
+    pub relationship: String,
+    pub confidence: f64,
+    pub confirmed_by: String,
+}
+
+// -- Intelligence Layer: Data Snapshot (SR_INT_05) --------------------------
+
+/// A DataSnapshot node produced by the snapshot scheduler per the freshness
+/// policy. Used for trend analysis and audit replay.
+/// Implements: SR_INT_05
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataSnapshot {
+    pub id: uuid::Uuid,
+    pub collection_id: uuid::Uuid,
+    pub timestamp: DateTime<Utc>,
+    pub checksum: String,
+    pub retention_until: DateTime<Utc>,
+}
+
+// -- Intelligence Layer: Trend Analysis (SR_INT_07) -------------------------
+
+/// A TrendAnalysis computed over successive DataSnapshots for a metric.
+/// Implements: SR_INT_07
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrendAnalysis {
+    pub id: uuid::Uuid,
+    pub metric: String,
+    pub direction: TrendDirection,
+    pub magnitude: f64,
+    pub significance: f64,
+    pub computed_at: DateTime<Utc>,
+}
+
+// -- Intelligence Layer: Review Queue Entry (SR_INT_08) ---------------------
+
+/// A queued low-confidence item awaiting human review before becoming fact.
+/// Implements: SR_INT_08
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewQueueEntry {
+    pub id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    pub item_type: String,
+    pub item_ref: String,
+    pub confidence: f64,
+    pub created_at: DateTime<Utc>,
+    pub resolved: bool,
+}

@@ -2015,3 +2015,147 @@ pub struct ConnectionKpiSummary {
 pub struct HealthDashboardResult {
     pub connections: Vec<ConnectionKpiSummary>,
 }
+
+// ============================================================================
+// Intelligence Layer request / result types (SR_INT_01 .. SR_INT_08)
+// ============================================================================
+
+use super::entities::RelationshipCandidate;
+use super::entities::SemanticTag;
+
+/// Input for initializing an empty intelligence graph for a new tenant.
+/// Implements: SR_INT_01
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphInitInput {
+    pub tenant_id: TenantId,
+}
+
+/// Result of graph initialization: the per-tenant subgraph is ready to
+/// receive nodes from subsequent SRs.
+/// Implements: SR_INT_01
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphInitResult {
+    pub ready: bool,
+}
+
+/// Reference to a DataCollection that has arrived and needs Stage 3-6 jobs
+/// queued for async tagging.
+/// Implements: SR_INT_02
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataCollectionRef {
+    pub tenant_id: TenantId,
+    pub collection_id: uuid::Uuid,
+}
+
+/// Result of triggering the tagging pipeline: the number of Stage 3-6 jobs
+/// enqueued.
+/// Implements: SR_INT_02
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaggingTriggerResult {
+    pub jobs_queued: u32,
+}
+
+/// Input for Stage 3 semantic tagging: the fields to tag inside a
+/// DataCollection.
+/// Implements: SR_INT_03
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticTaggingInput {
+    pub tenant_id: TenantId,
+    pub collection_id: uuid::Uuid,
+    pub fields: Vec<String>,
+}
+
+/// Result of Stage 3 semantic tagging: count tagged and the inferred tags.
+/// Implements: SR_INT_03
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SemanticTaggingResult {
+    pub fields_tagged: u32,
+    pub tags: Vec<SemanticTag>,
+}
+
+/// Input for Stage 4 relationship inference across a DataCollection.
+/// Implements: SR_INT_04
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelationshipInferenceInput {
+    pub tenant_id: TenantId,
+    pub collection_id: uuid::Uuid,
+}
+
+/// Result of Stage 4 relationship inference with separate counts for
+/// auto-added and queued-for-review candidates.
+/// Implements: SR_INT_04
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelationshipInferenceResult {
+    pub edges_added: u32,
+    pub edges_queued: u32,
+    pub candidates: Vec<RelationshipCandidate>,
+}
+
+/// Input for creating a DataSnapshot at a specific timestamp.
+/// Implements: SR_INT_05
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotInput {
+    pub tenant_id: TenantId,
+    pub collection_id: uuid::Uuid,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Result of snapshot creation: the new snapshot id and its content checksum.
+/// Implements: SR_INT_05
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotResult {
+    pub snapshot_id: uuid::Uuid,
+    pub checksum: String,
+}
+
+/// Input for Stage 5 quality assessment of a DataCollection.
+/// Implements: SR_INT_06
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QualityInput {
+    pub tenant_id: TenantId,
+    pub collection_id: uuid::Uuid,
+}
+
+/// Result of Stage 5 quality assessment: the DataQualityReport id and an
+/// overall [0,1] score.
+/// Implements: SR_INT_06
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QualityResult {
+    pub report_id: uuid::Uuid,
+    pub score: f64,
+}
+
+/// Input for computing a TrendAnalysis over a series of snapshots.
+/// Implements: SR_INT_07
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrendInput {
+    pub tenant_id: TenantId,
+    pub metric: String,
+    pub snapshot_ids: Vec<uuid::Uuid>,
+}
+
+/// Result of a TrendAnalysis computation.
+/// Implements: SR_INT_07
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrendResult {
+    pub trend_id: uuid::Uuid,
+    pub direction: TrendDirection,
+    pub magnitude: f64,
+}
+
+/// Input for enqueuing a low-confidence item into the human review queue.
+/// Implements: SR_INT_08
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewQueueInput {
+    pub tenant_id: TenantId,
+    pub item_type: String,
+    pub item_ref: String,
+    pub confidence: f64,
+}
+
+/// Result of enqueuing an item into the review queue.
+/// Implements: SR_INT_08
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReviewQueueResult {
+    pub queue_id: uuid::Uuid,
+}

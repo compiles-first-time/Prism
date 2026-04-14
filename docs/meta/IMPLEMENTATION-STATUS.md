@@ -133,6 +133,14 @@
 | SR_CONN_42 | Paywall governance | **Done** | prism-adapters | connection_operations.rs | 2 unit | Day 22 |
 | SR_CONN_43 | Bulk import logging | **Done** | prism-adapters | connection_operations.rs | 1 unit | Day 22 |
 | SR_CONN_44 | Health dashboard | **Done** | prism-adapters | connection_operations.rs | 1 unit | Day 22 |
+| SR_INT_01 | Tenant graph init | **Done** | prism-llm | intelligence.rs | 2 unit | Day 23 |
+| SR_INT_02 | Tagging pipeline trigger | **Done** | prism-llm | intelligence.rs | 2 unit | Day 23 |
+| SR_INT_03 | Stage 3 semantic tagging | **Done** | prism-llm | intelligence.rs | 2 unit | Day 23 |
+| SR_INT_04 | Stage 4 relationship inference | **Done** | prism-llm | intelligence.rs | 3 unit | Day 23 |
+| SR_INT_05 | DataSnapshot service | **Done** | prism-llm | intelligence.rs | 2 unit | Day 23 |
+| SR_INT_06 | Stage 5 quality assessment | **Done** | prism-llm | intelligence.rs | 2 unit | Day 23 |
+| SR_INT_07 | TrendAnalysis | **Done** | prism-llm | intelligence.rs | 3 unit | Day 23 |
+| SR_INT_08 | Human review queue | **Done** | prism-llm | intelligence.rs | 2 unit | Day 23 |
 | **REUSABLE** | MerkleChainHasher | **Done** | prism-audit | merkle_chain.rs | 7 unit | Day 2 |
 | **REUSABLE** | AuditLogger | **Done** | prism-audit | event_store.rs | 7 unit | Day 2 |
 | **REUSABLE** | TenantFilter | **Done** | prism-core | tenant_filter.rs | 3 unit | Day 4 |

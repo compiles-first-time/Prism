@@ -4,6 +4,24 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-14 -- Day 23: Spec 04 Intelligence Layer — graph growth + 6-stage tagging pipeline
+
+### Implemented
+- SR_INT_01 TenantGraphInitService: initialize empty per-tenant intelligence graph
+- SR_INT_02 TaggingPipelineService: async queue trigger for Stages 3-5
+- SR_INT_03 SemanticTaggingService (Stage 3): T1 LLM invocation for semantic_type/domain/unit
+- SR_INT_04 RelationshipInferenceService (Stage 4): AI-inferred edges with confidence scoring (high auto-added, medium queued, low rejected)
+- SR_INT_05 DataSnapshotService: SHA-256 checksumed snapshots with 180-day retention
+- SR_INT_06 QualityAssessmentService (Stage 5): 5-metric average (completeness/consistency/timeliness/uniqueness/accuracy)
+- SR_INT_07 TrendAnalysisService: Increasing/Decreasing/Stable/Volatile direction via 10% threshold + CV-based volatility
+- SR_INT_08 HumanReviewQueueService (Stage 6): enqueues items with confidence < 0.7
+
+### Test Summary
+- 18 new tests, 400 total, all passing. All quality gates green.
+- Cleaned up 4 pre-existing clippy warnings in existing files (map_or, filter+last, manual contains, dead code)
+
+---
+
 ## Session 2026-04-14 -- Day 22: Spec 03 Connection Layer COMPLETE — classification gate + operations
 
 ### Implemented

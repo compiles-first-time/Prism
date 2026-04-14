@@ -757,7 +757,7 @@ mod tests {
                 m.compartment_id == compartment_id
                     && m.tenant_id == tenant_id
                     && (m.person_id == Some(person_id)
-                        || m.role_id.map_or(false, |rid| role_ids.contains(&rid)))
+                        || m.role_id.is_some_and(|rid| role_ids.contains(&rid)))
             }))
         }
 

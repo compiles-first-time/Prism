@@ -875,8 +875,7 @@ mod tests {
             let snapshots = self.snapshots.lock().unwrap();
             Ok(snapshots
                 .iter()
-                .filter(|s| s.connection_id == connection_id)
-                .last()
+                .rfind(|s| s.connection_id == connection_id)
                 .cloned())
         }
 
@@ -1045,7 +1044,7 @@ mod tests {
 
         // RetryClassification expires in 7 days
         let days_until_expiry = (result.expires_at - Utc::now()).num_days();
-        assert!(days_until_expiry >= 6 && days_until_expiry <= 7);
+        assert!((6..=7).contains(&days_until_expiry));
     }
 
     // -- SR_CONN_33 tests -----------------------------------------------------
