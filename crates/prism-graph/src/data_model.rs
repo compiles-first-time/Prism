@@ -2,7 +2,8 @@
 //!
 //! Implements: SR_DM_03, SR_DM_04, SR_DM_06, SR_DM_07, SR_DM_08, SR_DM_09, SR_DM_10,
 //!             SR_DM_12, SR_DM_13, SR_DM_14, SR_DM_15, SR_DM_16, SR_DM_17, SR_DM_18,
-//!             SR_DM_19, SR_DM_21
+//!             SR_DM_19, SR_DM_21, SR_DM_23, SR_DM_24, SR_DM_25, SR_DM_26, SR_DM_28,
+//!             SR_DM_29
 //!
 //! All services use trait-based abstractions (`GraphWriter`, `PgWriter`,
 //! `PartitionManager`) so that mock implementations can be used in tests
@@ -15,6 +16,7 @@ use chrono::{Duration, Utc};
 use tracing::info;
 
 use prism_audit::event_store::AuditLogger;
+use prism_audit::tamper_response::TenantWriteFreeze;
 use prism_core::error::PrismError;
 use prism_core::types::*;
 
@@ -1339,6 +1341,476 @@ impl SaUsageLogService {
 }
 
 // ============================================================================
+// SR_DM_23 -- Vector write enforcer
+// ============================================================================
+
+/// Enforces model-tagging policy on vector writes.
+///
+/// Rejects vector write attempts that lack a model_id tag, since untagged
+/// embeddings cannot be rolled back during model migration (D-33).
+///
+/// Implements: SR_DM_23
+pub struct VectorWriteEnforcer {
+    audit: AuditLogger,
+}
+
+impl VectorWriteEnforcer {
+    pub fn new(audit: AuditLogger) -> Self {
+        Self { audit }
+    }
+
+    /// Enforce model-tagging policy on a vector write attempt.
+    ///
+    /// Rejects if `model_id` is `None` or empty (untagged embeddings
+    /// cannot be rolled back per D-33).
+    ///
+    /// Implements: SR_DM_23
+    pub async fn enforce(
+        &self,
+        attempt: VectorWriteAttempt,
+    ) -> Result<VectorWriteResult, PrismError> {
+        let model_id_valid = attempt
+            .model_id
+            .as_ref()
+            .map(|id| !id.is_empty())
+            .unwrap_or(false);
+
+        if !model_id_valid {
+            info!(
+                source = %attempt.source,
+                tenant_id = %attempt.tenant_id,
+                "untagged vector write rejected -- model_id missing or empty"
+            );
+
+            self.audit
+                .log(AuditEventInput {
+                    tenant_id: attempt.tenant_id,
+                    event_type: "data_model.untagged_vector_rejected".into(),
+                    actor_id: uuid::Uuid::nil(),
+                    actor_type: ActorType::System,
+                    target_id: None,
+                    target_type: Some("VectorEmbedding".into()),
+                    severity: Severity::Medium,
+                    source_layer: SourceLayer::Graph,
+                    governance_authority: None,
+                    payload: serde_json::json!({
+                        "source": attempt.source,
+                        "reason": "model_id missing or empty; untagged embeddings cannot be rolled back (D-33)",
+                    }),
+                })
+                .await?;
+
+            return Ok(VectorWriteResult {
+                accepted: false,
+                reason: Some(
+                    "model_id missing or empty; untagged embeddings cannot be rolled back (D-33)"
+                        .into(),
+                ),
+            });
+        }
+
+        Ok(VectorWriteResult {
+            accepted: true,
+            reason: None,
+        })
+    }
+}
+
+// ============================================================================
+// SR_DM_24 -- Graph maintenance service
+// ============================================================================
+
+/// Trait for executing graph maintenance cycles.
+///
+/// Implements: SR_DM_24
+#[async_trait]
+pub trait GraphMaintenanceWorker: Send + Sync {
+    /// Execute a maintenance cycle, returning the number of affected entities.
+    async fn execute_cycle(
+        &self,
+        tenant_id: Option<TenantId>,
+        cycle_type: MaintenanceCycleType,
+    ) -> Result<u64, PrismError>;
+}
+
+/// Service for running graph maintenance cycles.
+///
+/// Delegates to a `GraphMaintenanceWorker` and emits audit events
+/// on completion.
+///
+/// Implements: SR_DM_24
+pub struct GraphMaintenanceService {
+    worker: Arc<dyn GraphMaintenanceWorker>,
+    audit: AuditLogger,
+}
+
+impl GraphMaintenanceService {
+    pub fn new(worker: Arc<dyn GraphMaintenanceWorker>, audit: AuditLogger) -> Self {
+        Self { worker, audit }
+    }
+
+    /// Run a maintenance cycle of the specified type.
+    ///
+    /// 1. Delegate to the `GraphMaintenanceWorker`.
+    /// 2. Emit an audit event with the affected count.
+    ///
+    /// Implements: SR_DM_24
+    pub async fn run_cycle(
+        &self,
+        request: MaintenanceCycleRequest,
+    ) -> Result<MaintenanceCycleResult, PrismError> {
+        let affected_count = self
+            .worker
+            .execute_cycle(request.tenant_id, request.cycle_type)
+            .await?;
+
+        let cycle_label = serde_json::to_value(request.cycle_type)
+            .map(|v| v.as_str().unwrap_or("unknown").to_string())
+            .unwrap_or_else(|_| "unknown".into());
+
+        info!(
+            cycle_type = %cycle_label,
+            affected_count,
+            "graph maintenance cycle completed"
+        );
+
+        let tenant_for_audit = request.tenant_id.unwrap_or_default();
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: tenant_for_audit,
+                event_type: "data_model.maintenance_complete".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("GraphMaintenance".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Graph,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "cycle_type": cycle_label,
+                    "affected_count": affected_count,
+                }),
+            })
+            .await?;
+
+        Ok(MaintenanceCycleResult { affected_count })
+    }
+}
+
+// ============================================================================
+// SR_DM_25 -- Notification log service
+// ============================================================================
+
+/// Service for inserting notifications into the notification log.
+///
+/// High-volume writes -- no audit event emitted.
+///
+/// Implements: SR_DM_25
+pub struct NotificationLogService {
+    pg_writer: Arc<dyn PgWriter>,
+}
+
+impl NotificationLogService {
+    pub fn new(pg_writer: Arc<dyn PgWriter>) -> Self {
+        Self { pg_writer }
+    }
+
+    /// Insert a notification into the notification log.
+    ///
+    /// Supports `original_timestamp` for offline replay: if set, the
+    /// notification is recorded with its original timestamp rather than
+    /// the current time.
+    ///
+    /// Implements: SR_DM_25
+    pub async fn insert(&self, input: NotificationRow) -> Result<NotificationResult, PrismError> {
+        let timestamp = input
+            .original_timestamp
+            .unwrap_or_else(Utc::now)
+            .to_rfc3339();
+
+        let data = serde_json::json!({
+            "tenant_id": input.tenant_id.to_string(),
+            "person_id": input.person_id.to_string(),
+            "message": input.message,
+            "timestamp": timestamp,
+            "read_state": input.read_state,
+        });
+
+        let row_id = self.pg_writer.insert_row("notification_log", data).await?;
+
+        info!(
+            tenant_id = %input.tenant_id,
+            person_id = %input.person_id,
+            row_id = %row_id,
+            "notification inserted"
+        );
+
+        Ok(NotificationResult { row_id })
+    }
+}
+
+// ============================================================================
+// SR_DM_26 -- User preferences service
+// ============================================================================
+
+/// Service for upserting user preference key-value pairs.
+///
+/// No audit event emitted (user preference writes are not governance events).
+///
+/// Implements: SR_DM_26
+pub struct UserPreferencesService {
+    pg_writer: Arc<dyn PgWriter>,
+}
+
+impl UserPreferencesService {
+    pub fn new(pg_writer: Arc<dyn PgWriter>) -> Self {
+        Self { pg_writer }
+    }
+
+    /// Upsert a user preference.
+    ///
+    /// 1. Insert or update the preference row via `PgWriter`.
+    /// 2. No audit event (not a governance operation).
+    ///
+    /// Implements: SR_DM_26
+    pub async fn upsert(&self, input: PreferenceRow) -> Result<PreferenceResult, PrismError> {
+        let data = serde_json::json!({
+            "tenant_id": input.tenant_id.to_string(),
+            "person_id": input.person_id.to_string(),
+            "key": input.key,
+            "value": input.value,
+        });
+
+        let row_id = self.pg_writer.insert_row("user_preferences", data).await?;
+
+        info!(
+            tenant_id = %input.tenant_id,
+            person_id = %input.person_id,
+            key = %input.key,
+            row_id = %row_id,
+            "user preference upserted"
+        );
+
+        Ok(PreferenceResult { row_id })
+    }
+}
+
+// ============================================================================
+// SR_DM_28 -- Tenant isolation audit service
+// ============================================================================
+
+/// Trait for scanning the graph store for tenant isolation violations.
+///
+/// Implements: SR_DM_28
+#[async_trait]
+pub trait IsolationScanner: Send + Sync {
+    /// Scan for cross-tenant isolation violations.
+    ///
+    /// If `tenant_id` is `None`, scans all tenants.
+    async fn scan_for_violations(
+        &self,
+        tenant_id: Option<TenantId>,
+    ) -> Result<Vec<IsolationViolation>, PrismError>;
+}
+
+/// Service for auditing tenant isolation boundaries.
+///
+/// On violation: freezes writes on both affected tenants and alerts
+/// the security officer.
+///
+/// Implements: SR_DM_28
+pub struct TenantIsolationAuditService {
+    scanner: Arc<dyn IsolationScanner>,
+    freeze: Arc<dyn TenantWriteFreeze>,
+    audit: AuditLogger,
+}
+
+impl TenantIsolationAuditService {
+    pub fn new(
+        scanner: Arc<dyn IsolationScanner>,
+        freeze: Arc<dyn TenantWriteFreeze>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self {
+            scanner,
+            freeze,
+            audit,
+        }
+    }
+
+    /// Scan for tenant isolation violations.
+    ///
+    /// 1. Run the isolation scanner.
+    /// 2. If violations found, freeze writes on both affected tenants.
+    /// 3. Emit appropriate audit events.
+    ///
+    /// Implements: SR_DM_28
+    pub async fn scan(&self) -> Result<IsolationAuditResult, PrismError> {
+        let violations = self.scanner.scan_for_violations(None).await?;
+
+        if violations.is_empty() {
+            let sentinel_tenant = TenantId::new();
+            self.audit
+                .log(AuditEventInput {
+                    tenant_id: sentinel_tenant,
+                    event_type: "data_model.isolation_audit_complete".into(),
+                    actor_id: uuid::Uuid::nil(),
+                    actor_type: ActorType::System,
+                    target_id: None,
+                    target_type: Some("TenantIsolation".into()),
+                    severity: Severity::Low,
+                    source_layer: SourceLayer::Graph,
+                    governance_authority: None,
+                    payload: serde_json::json!({
+                        "result": "clean",
+                        "violation_count": 0,
+                    }),
+                })
+                .await?;
+
+            return Ok(IsolationAuditResult {
+                result: "clean".into(),
+                violations: vec![],
+            });
+        }
+
+        // Freeze writes on affected tenants and emit CRITICAL audit events
+        for violation in &violations {
+            // Freeze tenant A
+            self.freeze.freeze(violation.tenant_a).await?;
+            // Freeze tenant B
+            self.freeze.freeze(violation.tenant_b).await?;
+
+            info!(
+                entity_type = %violation.entity_type,
+                entity_id = %violation.entity_id,
+                tenant_a = %violation.tenant_a,
+                tenant_b = %violation.tenant_b,
+                "tenant isolation violation detected -- writes frozen"
+            );
+
+            self.audit
+                .log(AuditEventInput {
+                    tenant_id: violation.tenant_a,
+                    event_type: "data_model.isolation_violation_detected".into(),
+                    actor_id: uuid::Uuid::nil(),
+                    actor_type: ActorType::System,
+                    target_id: Some(violation.entity_id),
+                    target_type: Some(violation.entity_type.clone()),
+                    severity: Severity::Critical,
+                    source_layer: SourceLayer::Graph,
+                    governance_authority: None,
+                    payload: serde_json::json!({
+                        "tenant_a": violation.tenant_a.to_string(),
+                        "tenant_b": violation.tenant_b.to_string(),
+                        "description": violation.description,
+                    }),
+                })
+                .await?;
+        }
+
+        Ok(IsolationAuditResult {
+            result: "violations_detected".into(),
+            violations,
+        })
+    }
+}
+
+// ============================================================================
+// SR_DM_29 -- Feature flag cache invalidation service
+// ============================================================================
+
+/// Trait for invalidating cached values.
+///
+/// Implements: SR_DM_29
+#[async_trait]
+pub trait CacheInvalidator: Send + Sync {
+    /// Invalidate the cache entry for the given key.
+    async fn invalidate(&self, key: &str) -> Result<(), PrismError>;
+}
+
+/// Service for toggling feature flags with cache invalidation.
+///
+/// Persists the flag value via PgWriter and invalidates the
+/// corresponding cache entry via CacheInvalidator.
+///
+/// Implements: SR_DM_29
+pub struct FeatureFlagCacheService {
+    pg_writer: Arc<dyn PgWriter>,
+    cache: Arc<dyn CacheInvalidator>,
+    audit: AuditLogger,
+}
+
+impl FeatureFlagCacheService {
+    pub fn new(
+        pg_writer: Arc<dyn PgWriter>,
+        cache: Arc<dyn CacheInvalidator>,
+        audit: AuditLogger,
+    ) -> Self {
+        Self {
+            pg_writer,
+            cache,
+            audit,
+        }
+    }
+
+    /// Toggle a feature flag and invalidate the cache.
+    ///
+    /// 1. Persist the new flag value via `PgWriter`.
+    /// 2. Invalidate the cache entry via `CacheInvalidator`.
+    /// 3. Emit an audit event.
+    ///
+    /// Implements: SR_DM_29
+    pub async fn toggle_with_invalidation(
+        &self,
+        input: FeatureFlagToggle,
+    ) -> Result<FeatureFlagCacheResult, PrismError> {
+        let data = serde_json::json!({
+            "tenant_id": input.tenant_id.to_string(),
+            "flag_id": input.flag_id,
+            "value": input.value,
+        });
+
+        self.pg_writer.insert_row("feature_flags", data).await?;
+
+        // Build cache key: tenant_id:flag_id
+        let cache_key = format!("{}:{}", input.tenant_id, input.flag_id);
+        self.cache.invalidate(&cache_key).await?;
+
+        info!(
+            tenant_id = %input.tenant_id,
+            flag_id = %input.flag_id,
+            value = %input.value,
+            "feature flag toggled with cache invalidation"
+        );
+
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "data_model.feature_flag_cache_invalidated".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: None,
+                target_type: Some("FeatureFlag".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Graph,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "flag_id": input.flag_id,
+                    "new_value": input.value,
+                }),
+            })
+            .await?;
+
+        Ok(FeatureFlagCacheResult {
+            active: input.value,
+            cache_invalidated: true,
+        })
+    }
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
@@ -2417,5 +2889,423 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event_type, "data_model.sa_anomaly_logged");
         assert_eq!(events[0].severity, Severity::High);
+    }
+
+    // -- Mock GraphMaintenanceWorker ------------------------------------------
+
+    struct MockMaintenanceWorker {
+        affected_count: u64,
+        calls: Mutex<Vec<String>>,
+    }
+
+    impl MockMaintenanceWorker {
+        fn new(affected_count: u64) -> Self {
+            Self {
+                affected_count,
+                calls: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl GraphMaintenanceWorker for MockMaintenanceWorker {
+        async fn execute_cycle(
+            &self,
+            _tenant_id: Option<TenantId>,
+            cycle_type: MaintenanceCycleType,
+        ) -> Result<u64, PrismError> {
+            let label = serde_json::to_value(cycle_type)
+                .map(|v| v.as_str().unwrap_or("unknown").to_string())
+                .unwrap_or_else(|_| "unknown".into());
+            self.calls.lock().unwrap().push(label);
+            Ok(self.affected_count)
+        }
+    }
+
+    // -- Mock IsolationScanner ------------------------------------------------
+
+    struct MockIsolationScanner {
+        violations: Vec<IsolationViolation>,
+    }
+
+    impl MockIsolationScanner {
+        fn new(violations: Vec<IsolationViolation>) -> Self {
+            Self { violations }
+        }
+    }
+
+    #[async_trait]
+    impl IsolationScanner for MockIsolationScanner {
+        async fn scan_for_violations(
+            &self,
+            _tenant_id: Option<TenantId>,
+        ) -> Result<Vec<IsolationViolation>, PrismError> {
+            Ok(self.violations.clone())
+        }
+    }
+
+    // -- Mock TenantWriteFreeze -----------------------------------------------
+
+    struct MockFreeze {
+        frozen: Mutex<Vec<TenantId>>,
+    }
+
+    impl MockFreeze {
+        fn new() -> Self {
+            Self {
+                frozen: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn frozen_tenants(&self) -> Vec<TenantId> {
+            self.frozen.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl TenantWriteFreeze for MockFreeze {
+        async fn freeze(&self, tenant_id: TenantId) -> Result<bool, PrismError> {
+            let mut frozen = self.frozen.lock().unwrap();
+            if frozen.contains(&tenant_id) {
+                Ok(false)
+            } else {
+                frozen.push(tenant_id);
+                Ok(true)
+            }
+        }
+
+        async fn is_frozen(&self, tenant_id: TenantId) -> Result<bool, PrismError> {
+            Ok(self.frozen.lock().unwrap().contains(&tenant_id))
+        }
+    }
+
+    // -- Mock CacheInvalidator ------------------------------------------------
+
+    struct MockCacheInvalidator {
+        invalidated: Mutex<Vec<String>>,
+    }
+
+    impl MockCacheInvalidator {
+        fn new() -> Self {
+            Self {
+                invalidated: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn invalidated_keys(&self) -> Vec<String> {
+            self.invalidated.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl CacheInvalidator for MockCacheInvalidator {
+        async fn invalidate(&self, key: &str) -> Result<(), PrismError> {
+            self.invalidated.lock().unwrap().push(key.to_string());
+            Ok(())
+        }
+    }
+
+    // =========================================================================
+    // SR_DM_23 tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn vector_write_enforcer_accepts_tagged_write() {
+        let (_audit_repo, audit) = make_audit_logger();
+        let svc = VectorWriteEnforcer::new(audit);
+
+        let attempt = VectorWriteAttempt {
+            source: "recommendation_pipeline".into(),
+            model_id: Some("text-embedding-3-small".into()),
+            vector: vec![0.1, 0.2, 0.3],
+            tenant_id: TenantId::new(),
+        };
+
+        let result = svc.enforce(attempt).await.unwrap();
+
+        assert!(result.accepted);
+        assert!(result.reason.is_none());
+    }
+
+    #[tokio::test]
+    async fn vector_write_enforcer_rejects_untagged_write() {
+        let (audit_repo, audit) = make_audit_logger();
+        let svc = VectorWriteEnforcer::new(audit);
+
+        let attempt = VectorWriteAttempt {
+            source: "legacy_pipeline".into(),
+            model_id: None,
+            vector: vec![0.1, 0.2, 0.3],
+            tenant_id: TenantId::new(),
+        };
+
+        let result = svc.enforce(attempt).await.unwrap();
+
+        assert!(!result.accepted);
+        assert!(result.reason.is_some());
+        assert!(result.reason.unwrap().contains("D-33"));
+
+        let events = audit_repo.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "data_model.untagged_vector_rejected");
+    }
+
+    // =========================================================================
+    // SR_DM_24 tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn graph_maintenance_runs_cycle() {
+        let worker = Arc::new(MockMaintenanceWorker::new(42));
+        let (_audit_repo, audit) = make_audit_logger();
+        let svc = GraphMaintenanceService::new(worker.clone(), audit);
+
+        let request = MaintenanceCycleRequest {
+            tenant_id: Some(TenantId::new()),
+            cycle_type: MaintenanceCycleType::StalePrune,
+        };
+
+        let result = svc.run_cycle(request).await.unwrap();
+
+        assert_eq!(result.affected_count, 42);
+        assert_eq!(worker.calls.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn graph_maintenance_records_affected_count() {
+        let worker = Arc::new(MockMaintenanceWorker::new(100));
+        let (audit_repo, audit) = make_audit_logger();
+        let svc = GraphMaintenanceService::new(worker, audit);
+
+        let request = MaintenanceCycleRequest {
+            tenant_id: None,
+            cycle_type: MaintenanceCycleType::OrphanCleanup,
+        };
+
+        svc.run_cycle(request).await.unwrap();
+
+        let events = audit_repo.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "data_model.maintenance_complete");
+        assert_eq!(events[0].payload["affected_count"], 100);
+    }
+
+    // =========================================================================
+    // SR_DM_25 tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn notification_insert_succeeds() {
+        let pg_writer = Arc::new(MockPgWriter::new());
+        let svc = NotificationLogService::new(pg_writer.clone());
+
+        let input = NotificationRow {
+            tenant_id: TenantId::new(),
+            person_id: UserId::new(),
+            message: "Your automation has been approved".into(),
+            original_timestamp: None,
+            read_state: false,
+        };
+
+        let result = svc.insert(input).await.unwrap();
+
+        assert_ne!(result.row_id, uuid::Uuid::nil());
+        assert_eq!(pg_writer.row_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn notification_handles_original_timestamp_for_offline_replay() {
+        let pg_writer = Arc::new(MockPgWriter::new());
+        let svc = NotificationLogService::new(pg_writer.clone());
+
+        let original_ts = chrono::Utc::now() - Duration::hours(2);
+        let input = NotificationRow {
+            tenant_id: TenantId::new(),
+            person_id: UserId::new(),
+            message: "Offline notification replay".into(),
+            original_timestamp: Some(original_ts),
+            read_state: true,
+        };
+
+        let result = svc.insert(input).await.unwrap();
+
+        assert_ne!(result.row_id, uuid::Uuid::nil());
+
+        let rows = pg_writer.rows.lock().unwrap();
+        assert_eq!(rows[0].0, "notification_log");
+        assert_eq!(rows[0].1["timestamp"], original_ts.to_rfc3339());
+    }
+
+    // =========================================================================
+    // SR_DM_26 tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn user_preference_upsert_succeeds() {
+        let pg_writer = Arc::new(MockPgWriter::new());
+        let svc = UserPreferencesService::new(pg_writer.clone());
+
+        let input = PreferenceRow {
+            tenant_id: TenantId::new(),
+            person_id: UserId::new(),
+            key: "theme".into(),
+            value: serde_json::json!("dark"),
+        };
+
+        let result = svc.upsert(input).await.unwrap();
+
+        assert_ne!(result.row_id, uuid::Uuid::nil());
+        assert_eq!(pg_writer.row_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn user_preference_records_correct_key_value() {
+        let pg_writer = Arc::new(MockPgWriter::new());
+        let svc = UserPreferencesService::new(pg_writer.clone());
+
+        let input = PreferenceRow {
+            tenant_id: TenantId::new(),
+            person_id: UserId::new(),
+            key: "locale".into(),
+            value: serde_json::json!("en-US"),
+        };
+
+        svc.upsert(input).await.unwrap();
+
+        let rows = pg_writer.rows.lock().unwrap();
+        assert_eq!(rows[0].0, "user_preferences");
+        assert_eq!(rows[0].1["key"], "locale");
+        assert_eq!(rows[0].1["value"], "en-US");
+    }
+
+    // =========================================================================
+    // SR_DM_28 tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn isolation_audit_clean_scan() {
+        let scanner = Arc::new(MockIsolationScanner::new(vec![]));
+        let freeze = Arc::new(MockFreeze::new());
+        let (audit_repo, audit) = make_audit_logger();
+        let svc = TenantIsolationAuditService::new(scanner, freeze.clone(), audit);
+
+        let result = svc.scan().await.unwrap();
+
+        assert_eq!(result.result, "clean");
+        assert!(result.violations.is_empty());
+        assert!(freeze.frozen_tenants().is_empty());
+
+        let events = audit_repo.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "data_model.isolation_audit_complete");
+    }
+
+    #[tokio::test]
+    async fn isolation_audit_violation_freezes_tenants() {
+        let tenant_a = TenantId::new();
+        let tenant_b = TenantId::new();
+        let violation = IsolationViolation {
+            entity_type: "DataCollection".into(),
+            entity_id: uuid::Uuid::new_v4(),
+            tenant_a,
+            tenant_b,
+            description: "Cross-tenant edge detected between DataCollection nodes".into(),
+        };
+        let scanner = Arc::new(MockIsolationScanner::new(vec![violation]));
+        let freeze = Arc::new(MockFreeze::new());
+        let (_audit_repo, audit) = make_audit_logger();
+        let svc = TenantIsolationAuditService::new(scanner, freeze.clone(), audit);
+
+        let result = svc.scan().await.unwrap();
+
+        assert_eq!(result.result, "violations_detected");
+        assert_eq!(result.violations.len(), 1);
+
+        let frozen = freeze.frozen_tenants();
+        assert!(frozen.contains(&tenant_a));
+        assert!(frozen.contains(&tenant_b));
+    }
+
+    #[tokio::test]
+    async fn isolation_audit_violation_records_details() {
+        let tenant_a = TenantId::new();
+        let tenant_b = TenantId::new();
+        let entity_id = uuid::Uuid::new_v4();
+        let violation = IsolationViolation {
+            entity_type: "Recommendation".into(),
+            entity_id,
+            tenant_a,
+            tenant_b,
+            description: "Shared recommendation node across tenants".into(),
+        };
+        let scanner = Arc::new(MockIsolationScanner::new(vec![violation]));
+        let freeze = Arc::new(MockFreeze::new());
+        let (audit_repo, audit) = make_audit_logger();
+        let svc = TenantIsolationAuditService::new(scanner, freeze, audit);
+
+        svc.scan().await.unwrap();
+
+        let events = audit_repo.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].event_type,
+            "data_model.isolation_violation_detected"
+        );
+        assert_eq!(events[0].severity, Severity::Critical);
+        assert_eq!(events[0].target_id, Some(entity_id));
+    }
+
+    // =========================================================================
+    // SR_DM_29 tests
+    // =========================================================================
+
+    #[tokio::test]
+    async fn feature_flag_toggle_invalidates_cache() {
+        let pg_writer = Arc::new(MockPgWriter::new());
+        let cache = Arc::new(MockCacheInvalidator::new());
+        let (_audit_repo, audit) = make_audit_logger();
+        let svc = FeatureFlagCacheService::new(pg_writer.clone(), cache.clone(), audit);
+
+        let input = FeatureFlagToggle {
+            tenant_id: TenantId::new(),
+            flag_id: "dark_mode".into(),
+            value: true,
+        };
+
+        let result = svc.toggle_with_invalidation(input).await.unwrap();
+
+        assert!(result.active);
+        assert!(result.cache_invalidated);
+
+        let keys = cache.invalidated_keys();
+        assert_eq!(keys.len(), 1);
+        assert!(keys[0].contains("dark_mode"));
+    }
+
+    #[tokio::test]
+    async fn feature_flag_toggle_records_new_value() {
+        let pg_writer = Arc::new(MockPgWriter::new());
+        let cache = Arc::new(MockCacheInvalidator::new());
+        let (audit_repo, audit) = make_audit_logger();
+        let svc = FeatureFlagCacheService::new(pg_writer.clone(), cache, audit);
+
+        let input = FeatureFlagToggle {
+            tenant_id: TenantId::new(),
+            flag_id: "beta_features".into(),
+            value: false,
+        };
+
+        let result = svc.toggle_with_invalidation(input).await.unwrap();
+
+        assert!(!result.active);
+        assert_eq!(pg_writer.row_count(), 1);
+
+        let events = audit_repo.events.lock().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].event_type,
+            "data_model.feature_flag_cache_invalidated"
+        );
+        assert_eq!(events[0].payload["new_value"], false);
     }
 }

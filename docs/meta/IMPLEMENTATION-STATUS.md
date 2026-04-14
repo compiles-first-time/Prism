@@ -81,7 +81,14 @@
 | SR_DM_19 | Dual embedding store | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 18 |
 | SR_DM_20 | Service account node | **Done** | prism-identity | pg_repository.rs | -- | Day 4 (PG only) |
 | SR_DM_21 | SA usage/anomaly log | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 18 |
+| SR_DM_22 | Event-driven sync | **Done** | prism-graph | sync_service.rs | 3 unit | Week 3 Day 19 |
+| SR_DM_23 | Vector write enforcer | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 19 |
+| SR_DM_24 | Graph maintenance | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 19 |
+| SR_DM_25 | Notification log | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 19 |
+| SR_DM_26 | User preferences | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 19 |
 | SR_DM_27 | Tenant isolation (query) | **Done** | prism-core | tenant_filter.rs | 3 unit | Day 4 (single-tenant stub) |
+| SR_DM_28 | Tenant isolation audit | **Done** | prism-graph | data_model.rs | 3 unit | Week 3 Day 19 |
+| SR_DM_29 | Feature flag cache | **Done** | prism-graph | data_model.rs | 2 unit | Week 3 Day 19 |
 | **REUSABLE** | MerkleChainHasher | **Done** | prism-audit | merkle_chain.rs | 7 unit | Day 2 |
 | **REUSABLE** | AuditLogger | **Done** | prism-audit | event_store.rs | 7 unit | Day 2 |
 | **REUSABLE** | TenantFilter | **Done** | prism-core | tenant_filter.rs | 3 unit | Day 4 |

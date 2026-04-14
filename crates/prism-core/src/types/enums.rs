@@ -421,6 +421,28 @@ pub enum DataOrigin {
     ResearchAgent,
 }
 
+/// Graph maintenance cycle type.
+/// Determines what type of maintenance operation to perform on the knowledge graph.
+/// Implements: SR_DM_24
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MaintenanceCycleType {
+    /// Remove stale nodes that have not been updated within the retention window.
+    StalePrune,
+    /// Remove orphan nodes with no inbound or outbound edges.
+    OrphanCleanup,
+    /// Rebuild or refresh graph indexes for query performance.
+    IndexOptimization,
+    /// Re-embed nodes whose embeddings are outdated due to model migration.
+    EmbeddingRefresh,
+    /// Apply time-based confidence decay to recommendation scores.
+    ConfidenceDecay,
+    /// Take a full or incremental backup of the graph store.
+    GraphBackup,
+    /// Audit tenant isolation boundaries for cross-tenant leakage.
+    TenantIsolationAudit,
+}
+
 /// Source layer that produced a governance event (SR_GOV_47).
 /// Maps to the architectural layers in the PRISM spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

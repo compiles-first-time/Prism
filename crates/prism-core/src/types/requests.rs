@@ -1539,3 +1539,142 @@ pub struct SaAnomalyEvent {
     pub severity: Severity,
     pub evidence: serde_json::Value,
 }
+
+// -- Event-driven sync requests (SR_DM_22) ------------------------------------
+
+/// An event describing a cross-store sync operation.
+/// Implements: SR_DM_22
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncEvent {
+    pub source_store: String,
+    pub target_store: String,
+    pub entity_type: String,
+    pub entity_id: uuid::Uuid,
+    pub payload: serde_json::Value,
+    pub tenant_id: TenantId,
+}
+
+/// Result of processing a sync event.
+/// Implements: SR_DM_22
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncResult {
+    pub applied_at: DateTime<Utc>,
+    pub latency_ms: u64,
+    pub state: String,
+}
+
+// -- Vector write enforcer requests (SR_DM_23) --------------------------------
+
+/// A vector write attempt to be validated before persistence.
+/// Implements: SR_DM_23
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorWriteAttempt {
+    pub source: String,
+    pub model_id: Option<String>,
+    pub vector: Vec<f32>,
+    pub tenant_id: TenantId,
+}
+
+/// Result of vector write enforcement.
+/// Implements: SR_DM_23
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VectorWriteResult {
+    pub accepted: bool,
+    pub reason: Option<String>,
+}
+
+// -- Graph maintenance requests (SR_DM_24) ------------------------------------
+
+/// Request to run a graph maintenance cycle.
+/// Implements: SR_DM_24
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaintenanceCycleRequest {
+    pub tenant_id: Option<TenantId>,
+    pub cycle_type: MaintenanceCycleType,
+}
+
+/// Result of a graph maintenance cycle.
+/// Implements: SR_DM_24
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaintenanceCycleResult {
+    pub affected_count: u64,
+}
+
+// -- Notification log requests (SR_DM_25) -------------------------------------
+
+/// A notification row to be inserted into the notification log.
+/// Implements: SR_DM_25
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationRow {
+    pub tenant_id: TenantId,
+    pub person_id: UserId,
+    pub message: String,
+    pub original_timestamp: Option<DateTime<Utc>>,
+    pub read_state: bool,
+}
+
+/// Result of notification log insertion.
+/// Implements: SR_DM_25
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationResult {
+    pub row_id: uuid::Uuid,
+}
+
+// -- User preferences requests (SR_DM_26) -------------------------------------
+
+/// A user preference row to be upserted.
+/// Implements: SR_DM_26
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreferenceRow {
+    pub tenant_id: TenantId,
+    pub person_id: UserId,
+    pub key: String,
+    pub value: serde_json::Value,
+}
+
+/// Result of preference upsert.
+/// Implements: SR_DM_26
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreferenceResult {
+    pub row_id: uuid::Uuid,
+}
+
+// -- Tenant isolation audit requests (SR_DM_28) -------------------------------
+
+/// A detected tenant isolation violation.
+/// Implements: SR_DM_28
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IsolationViolation {
+    pub entity_type: String,
+    pub entity_id: uuid::Uuid,
+    pub tenant_a: TenantId,
+    pub tenant_b: TenantId,
+    pub description: String,
+}
+
+/// Result of a tenant isolation audit scan.
+/// Implements: SR_DM_28
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IsolationAuditResult {
+    pub result: String,
+    pub violations: Vec<IsolationViolation>,
+}
+
+// -- Feature flag cache invalidation requests (SR_DM_29) ----------------------
+
+/// Request to toggle a feature flag with cache invalidation.
+/// Implements: SR_DM_29
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeatureFlagToggle {
+    pub tenant_id: TenantId,
+    pub flag_id: String,
+    pub value: bool,
+}
+
+/// Result of feature flag toggle with cache invalidation.
+/// Implements: SR_DM_29
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeatureFlagCacheResult {
+    pub active: bool,
+    pub cache_invalidated: bool,
+}
