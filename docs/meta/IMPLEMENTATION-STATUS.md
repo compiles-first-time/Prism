@@ -40,6 +40,12 @@
 | SR_GOV_68 | Feature flag toggle | **Done** | prism-governance | feature_flags.rs | 5 unit | Week 2 Day 12 |
 | SR_GOV_69 | Admin undo | **Done** | prism-governance | admin_undo.rs | 5 unit | Week 2 Day 12 |
 | SR_GOV_72 | Rejection justification | **Done** | prism-governance | rejection_validation.rs | 5 unit | Week 2 Day 12 |
+| SR_GOV_70 | Connection consent | **Done** | prism-governance | connection_consent.rs | 4 unit | Week 3 Day 13 |
+| SR_GOV_71 | Coverage disclosure | **Done** | prism-governance | coverage_enforcement.rs | 4 unit | Week 3 Day 13 |
+| SR_GOV_23 | CSA rule registration | **Done** | prism-governance | csa_engine.rs | 4 unit | Week 3 Day 13 |
+| SR_GOV_24 | CSA assessment trigger | **Done** | prism-governance | csa_engine.rs | 4 unit | Week 3 Day 13 |
+| SR_GOV_25 | CSA evaluator | **Done** | prism-governance | csa_engine.rs | 4 unit | Week 3 Day 13 |
+| SR_GOV_26 | CSA BLOCK action | **Done** | prism-governance | csa_engine.rs | 2 unit | Week 3 Day 13 |
 | SR_GOV_52 | Crypto-shredding | Deferred | prism-compliance | crypto_shredding.rs | -- | Week 3+ (needs CaaS) |
 | SR_DM_01 | Tenant node creation | **Done** | prism-governance | pg_tenant_repo.rs | -- | Day 3 (PG only; Neo4j Week 2) |
 | SR_DM_02 | Person node creation | **Done** | prism-identity | pg_repository.rs | -- | Day 4 (PG only) |

@@ -4,6 +4,66 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-14 -- Day 13 (Week 3): Connection consent, coverage enforcement, CSA engine core
+
+### Implemented
+- SR_GOV_70 ConnectionConsentService: explicit tenant consent for external system connections
+  - capture_consent(): validates vendor terms acknowledged, non-empty system_id, non-nil authorized_by
+  - Optional PaywallAcknowledgement for vendor ToS compliance (D-54, BP-98)
+  - ConnectionConsentRepository trait, ConnectionConsent entity
+  - Audit event: `connection.consent_captured`
+  - 4 new tests: consent succeeds, with paywall, unacknowledged terms, empty system_id
+- SR_GOV_71 CoverageEnforcementService: Decision Support coverage disclosure enforcement
+  - enforce(): stateless validation checking response_payload has `coverage_disclosure` with `coverage_percentage` and `data_sources_count`
+  - Audit event on failure: `coverage.disclosure_missing`
+  - 4 new tests: valid passes, missing disclosure, missing percentage, missing data_sources_count
+- SR_GOV_23 CsaRuleService: CSA rule registration with grammar validation
+  - register_rule(): parses "ATTR + ATTR" expression format, validates against known attribute set (pii, phi, cui, financial, location, temporal, group_size, external)
+  - SR_GOV_23_BE-01: rejects invalid expressions with precise parse error and acceptable attributes list
+  - CsaRuleRepository trait, CsaRule entity, CsaAction enum (Block, Anonymize, Elevate)
+  - Audit event: `csa.rule_registered`
+  - 4 new tests: valid registration, invalid expression, unknown attribute, empty expression
+- SR_GOV_25 CsaEvaluator: pure-function CSA rule evaluator
+  - evaluate(): matches rules against combined attribute set, returns highest-severity action
+  - No I/O -- testable in isolation, composable with SR_GOV_24
+  - CsaEvaluationOutput type
+  - 4 new tests: no match returns None, single match, multiple rules highest wins, partial match doesn't fire
+- SR_GOV_24 CsaAssessmentService: CSA assessment trigger
+  - assess(): loads active rules, runs CsaEvaluator, returns CsaDecision (Allow/Block/Anonymize/Elevate)
+  - Validation: requires N >= 2 data_collection_refs (CSA only triggers for multi-source combines)
+  - CsaDecision enum, CsaAssessmentResult type
+  - Audit event: `csa.assessed`
+  - 4 new tests: allow on no match, block on rule match, skips single source, highest severity action
+- SR_GOV_26 CsaBlockHandler: CSA BLOCK action handler
+  - handle_block(): returns explainable rejection with suggested alternatives
+  - Audit event: `csa.blocked`
+  - 2 new tests: block with alternatives, block with empty alternatives
+
+### Design Decisions
+- CSA rule expression grammar is intentionally simple ("ATTR + ATTR") for MVP; can be replaced with JSONLogic later
+- Known attribute set is a compile-time constant (8 attributes from spec); tenant-custom attributes deferred
+- CsaEvaluator is a pure function (no I/O, no state) -- enables easy testing and deterministic behavior
+- CsaAssessmentService skips evaluation when fewer than 2 data sources -- single-source queries have no mosaic effect
+- Coverage enforcement is stateless -- no repository needed, just validates response structure
+- Connection consent captures paywall acknowledgement as optional (only for paywalled APIs per D-54)
+
+### Files Changed
+- `crates/prism-core/src/types/enums.rs` -- added CsaAction, CsaDecision enums
+- `crates/prism-core/src/types/entities.rs` -- added ConnectionConsent, CsaRule entities
+- `crates/prism-core/src/types/requests.rs` -- added 12 request/result types for SR_GOV_70, 71, 23-26
+- `crates/prism-core/src/repository.rs` -- added ConnectionConsentRepository, CsaRuleRepository traits
+- `crates/prism-governance/src/connection_consent.rs` -- new file, ConnectionConsentService + 4 tests
+- `crates/prism-governance/src/coverage_enforcement.rs` -- new file, CoverageEnforcementService + 4 tests
+- `crates/prism-governance/src/csa_engine.rs` -- new file, CsaRuleService + CsaEvaluator + CsaAssessmentService + CsaBlockHandler + 14 tests
+- `crates/prism-governance/src/lib.rs` -- registered 3 new modules
+
+### Test Summary
+- 22 new tests (4 consent + 4 coverage + 4 registration + 4 evaluator + 4 assessment + 2 block)
+- 205 total workspace tests, all passing
+- All quality gates green: fmt, clippy, test, check
+
+---
+
 ## Session 2026-04-14 -- Day 12 (Week 2): Criminal-penalty override, compartment audit, feature flags, admin undo, rejection validation
 
 ### Implemented

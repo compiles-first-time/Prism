@@ -215,6 +215,40 @@ pub struct AdminAction {
     pub is_undone: bool,
 }
 
+// -- Connection Consent (SR_GOV_70) -----------------------------------------
+
+/// A recorded consent for an external system connection.
+/// Implements: SR_GOV_70
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionConsent {
+    pub id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    pub system_id: String,
+    pub connection_type: String,
+    pub scope: String,
+    pub vendor_terms_acknowledged: bool,
+    pub paywall_recorded: bool,
+    pub authorized_by: UserId,
+    pub created_at: DateTime<Utc>,
+}
+
+// -- CSA Rule (SR_GOV_23) ---------------------------------------------------
+
+/// A Cross-System Aggregation rule that triggers when multiple data collections
+/// are combined and matching attributes are present.
+/// Implements: SR_GOV_23
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaRule {
+    pub id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    pub rule_expression: String,
+    pub action: CsaAction,
+    pub severity: Severity,
+    pub version: u64,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+}
+
 // -- Approval Chain ---------------------------------------------------------
 
 /// An approval chain instance computed by the LCA algorithm.

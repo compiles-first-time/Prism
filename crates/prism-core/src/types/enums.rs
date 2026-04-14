@@ -314,6 +314,30 @@ pub enum QueryOutcome {
     Blocked,
 }
 
+/// Action to take when a CSA rule matches.
+/// Implements: SR_GOV_23
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CsaAction {
+    /// Block the query entirely.
+    Block,
+    /// Anonymize sensitive attributes before returning results.
+    Anonymize,
+    /// Elevate to a human reviewer for approval.
+    Elevate,
+}
+
+/// Decision from a CSA assessment.
+/// Implements: SR_GOV_24
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CsaDecision {
+    Allow,
+    Block,
+    Anonymize,
+    Elevate,
+}
+
 /// Source layer that produced a governance event (SR_GOV_47).
 /// Maps to the architectural layers in the PRISM spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

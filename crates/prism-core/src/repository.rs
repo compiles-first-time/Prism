@@ -226,6 +226,34 @@ pub trait DecisionSampleRepository: Send + Sync {
     ) -> Result<Vec<(String, serde_json::Value, String)>, PrismError>;
 }
 
+// -- Connection Consent Repository (SR_GOV_70) --------------------------------
+
+/// Persistence operations for connection consents.
+/// Implements: SR_GOV_70
+#[async_trait]
+pub trait ConnectionConsentRepository: Send + Sync {
+    /// Record a new connection consent.
+    /// Implements: SR_GOV_70
+    async fn record_consent(&self, consent: &ConnectionConsent) -> Result<(), PrismError>;
+}
+
+// -- CSA Rule Repository (SR_GOV_23) ------------------------------------------
+
+/// Persistence operations for CSA rules.
+/// Implements: SR_GOV_23
+#[async_trait]
+pub trait CsaRuleRepository: Send + Sync {
+    /// Create a new CSA rule.
+    /// Implements: SR_GOV_23
+    async fn create(&self, rule: &CsaRule) -> Result<(), PrismError>;
+
+    /// List all active CSA rules for a tenant.
+    async fn list_active_rules(&self, tenant_id: TenantId) -> Result<Vec<CsaRule>, PrismError>;
+
+    /// Get a CSA rule by ID.
+    async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<CsaRule>, PrismError>;
+}
+
 // -- Audit Event Repository (SR_DM_05) --------------------------------------
 
 /// Persistence operations for the append-only audit event store.

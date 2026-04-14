@@ -716,6 +716,130 @@ pub struct RejectionResult {
     pub validation_findings: Option<String>,
 }
 
+// -- Connection consent requests (SR_GOV_70) ---------------------------------
+
+/// Request to capture explicit tenant consent for an external system connection.
+/// Implements: SR_GOV_70
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionConsentRequest {
+    pub tenant_id: TenantId,
+    pub system_id: String,
+    pub connection_type: String,
+    pub scope: String,
+    pub vendor_terms_acknowledged: bool,
+    pub paywall_acknowledgement: Option<PaywallAcknowledgement>,
+    pub authorized_by: UserId,
+}
+
+/// Paywall acknowledgement for vendor terms of service.
+/// Implements: SR_GOV_70
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PaywallAcknowledgement {
+    pub vendor_tos_url: String,
+    pub accepted_at: DateTime<Utc>,
+    pub accepted_by: UserId,
+}
+
+/// Result of a connection consent capture.
+/// Implements: SR_GOV_70
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionConsentResult {
+    pub consent_id: uuid::Uuid,
+    pub paywall_recorded: bool,
+}
+
+// -- Coverage enforcement requests (SR_GOV_71) --------------------------------
+
+/// Input for coverage disclosure enforcement.
+/// Implements: SR_GOV_71
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoverageEnforcementInput {
+    pub tenant_id: TenantId,
+    pub response_payload: serde_json::Value,
+    pub query_context: serde_json::Value,
+}
+
+/// Result of coverage disclosure enforcement.
+/// Implements: SR_GOV_71
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoverageEnforcementResult {
+    pub passed: bool,
+    pub missing_fields: Option<Vec<String>>,
+}
+
+// -- CSA rule registration requests (SR_GOV_23) -------------------------------
+
+/// Request to register a new CSA rule.
+/// Implements: SR_GOV_23
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaRuleRegistration {
+    pub tenant_id: TenantId,
+    pub rule_expression: String,
+    pub action: CsaAction,
+    pub severity: Severity,
+    pub dry_run_sample_size: Option<usize>,
+}
+
+/// Result of CSA rule registration.
+/// Implements: SR_GOV_23
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaRuleResult {
+    pub rule_id: uuid::Uuid,
+    pub version: u64,
+    pub active: bool,
+}
+
+// -- CSA evaluator types (SR_GOV_25) ------------------------------------------
+
+/// Output from the pure-function CSA evaluator.
+/// Implements: SR_GOV_25
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaEvaluationOutput {
+    pub matched_rules: Vec<String>,
+    pub highest_action: Option<CsaAction>,
+}
+
+// -- CSA assessment requests (SR_GOV_24) --------------------------------------
+
+/// Request to trigger a CSA assessment.
+/// Implements: SR_GOV_24
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaAssessmentRequest {
+    pub tenant_id: TenantId,
+    pub query_id: uuid::Uuid,
+    pub data_collection_refs: Vec<String>,
+    pub combined_attribute_set: std::collections::HashSet<String>,
+    pub query_purpose: Option<String>,
+}
+
+/// Result of a CSA assessment.
+/// Implements: SR_GOV_24
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaAssessmentResult {
+    pub decision: CsaDecision,
+    pub applied_rules: Vec<String>,
+    pub required_action: Option<CsaAction>,
+}
+
+// -- CSA block action requests (SR_GOV_26) ------------------------------------
+
+/// Input for handling a CSA block action.
+/// Implements: SR_GOV_26
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaBlockAction {
+    pub assessment_id: uuid::Uuid,
+    pub reason: String,
+    pub suggested_alternatives: Vec<String>,
+}
+
+/// Result of a CSA block action.
+/// Implements: SR_GOV_26
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaBlockResult {
+    pub rejected: bool,
+    pub alternatives: Vec<String>,
+}
+
 // -- Lifecycle requests (FOUND S 1.5.1) -------------------------------------
 
 /// A validated state transition produced by the lifecycle state machine.
