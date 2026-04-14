@@ -249,6 +249,41 @@ pub struct CsaRule {
     pub created_at: DateTime<Utc>,
 }
 
+// -- Break-Glass Activation (SR_GOV_29) -------------------------------------
+
+/// A record of a break-glass emergency activation.
+/// Requires two-person approval and mandatory post-incident review.
+/// Implements: SR_GOV_29
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BreakGlassActivation {
+    pub id: uuid::Uuid,
+    pub assessment_id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    pub justification: String,
+    pub approver_1: UserId,
+    pub approver_2: UserId,
+    pub duration_minutes: u64,
+    pub activated_at: DateTime<Utc>,
+    pub expires_at: DateTime<Utc>,
+    pub review_id: uuid::Uuid,
+    pub is_reviewed: bool,
+}
+
+// -- CSA Assessment Record (SR_GOV_30) --------------------------------------
+
+/// A persisted CSA assessment record for graph and historical queries.
+/// Implements: SR_GOV_30
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaAssessmentRecord {
+    pub id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    pub query_id: uuid::Uuid,
+    pub data_collection_refs: Vec<String>,
+    pub decision: super::enums::CsaDecision,
+    pub applied_rules: Vec<String>,
+    pub created_at: DateTime<Utc>,
+}
+
 // -- Approval Chain ---------------------------------------------------------
 
 /// An approval chain instance computed by the LCA algorithm.

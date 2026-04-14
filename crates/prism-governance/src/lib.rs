@@ -9,6 +9,7 @@ pub mod csa_engine;
 pub mod def;
 pub mod drprr;
 pub mod feature_flags;
+pub mod governance_hooks;
 pub mod lca;
 pub mod liability;
 pub mod meta_policy;

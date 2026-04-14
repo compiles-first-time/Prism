@@ -1,10 +1,14 @@
-//! Cross-System Aggregation (CSA) engine (SR_GOV_23, SR_GOV_24, SR_GOV_25, SR_GOV_26).
+//! Cross-System Aggregation (CSA) engine (SR_GOV_23 -- SR_GOV_30).
 //!
 //! Implements the CSA rule lifecycle:
 //! - SR_GOV_23: Rule registration with expression parsing and validation
 //! - SR_GOV_24: Assessment trigger composing rule loading + evaluation + audit
 //! - SR_GOV_25: Pure-function evaluator (no I/O)
 //! - SR_GOV_26: BLOCK action handler
+//! - SR_GOV_27: ANONYMIZE action handler
+//! - SR_GOV_28: ELEVATE action handler
+//! - SR_GOV_29: Break-glass activation and review
+//! - SR_GOV_30: Assessment persistence
 //!
 //! CSA rules fire when multiple data collections are combined and the
 //! combined attribute set matches a rule expression. The expression grammar
@@ -13,12 +17,12 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use chrono::Utc;
+use chrono::{Duration, Utc};
 use tracing::{info, warn};
 
 use prism_audit::event_store::AuditLogger;
 use prism_core::error::PrismError;
-use prism_core::repository::CsaRuleRepository;
+use prism_core::repository::{BreakGlassRepository, CsaAssessmentRepository, CsaRuleRepository};
 use prism_core::types::*;
 
 /// Known attribute names that may appear in CSA rule expressions.
@@ -398,6 +402,455 @@ impl CsaBlockHandler {
         Ok(CsaBlockResult {
             rejected: true,
             alternatives: action.suggested_alternatives.clone(),
+        })
+    }
+}
+
+// ===========================================================================
+// SR_GOV_27 -- CSA ANONYMIZE Handler
+// ===========================================================================
+
+/// Trait for pluggable anonymization strategies.
+///
+/// Implementations provide the actual anonymization algorithm (k-anonymity,
+/// differential privacy, etc.). The CSA engine orchestrates via this trait.
+///
+/// Implements: SR_GOV_27
+#[async_trait::async_trait]
+pub trait AnonymizationFunction: Send + Sync {
+    /// Anonymize the given data references using the specified parameters.
+    ///
+    /// Implements: SR_GOV_27
+    async fn anonymize(
+        &self,
+        data: &[String],
+        k_anonymity: u32,
+        strategy: &str,
+    ) -> Result<AnonymizedPayload, PrismError>;
+}
+
+/// Output of an anonymization operation.
+///
+/// Implements: SR_GOV_27
+#[derive(Debug, Clone)]
+pub struct AnonymizedPayload {
+    pub payload: serde_json::Value,
+    pub parameters: String,
+    pub residual_risk: f64,
+}
+
+/// Handler for CSA ANONYMIZE actions.
+///
+/// Composes:
+/// - `AnonymizationFunction` -- pluggable anonymization strategy
+/// - `AuditLogger` -- audit trail for anonymize events
+///
+/// Implements: SR_GOV_27
+pub struct CsaAnonymizeHandler {
+    anonymizer: Arc<dyn AnonymizationFunction>,
+    audit: AuditLogger,
+}
+
+impl CsaAnonymizeHandler {
+    /// Create a new CSA anonymize handler.
+    pub fn new(anonymizer: Arc<dyn AnonymizationFunction>, audit: AuditLogger) -> Self {
+        Self { anonymizer, audit }
+    }
+
+    /// Handle a CSA anonymize action.
+    ///
+    /// Delegates to the `AnonymizationFunction` trait for the actual
+    /// anonymization, records the result and residual risk in the audit trail.
+    ///
+    /// Implements: SR_GOV_27
+    pub async fn handle_anonymize(
+        &self,
+        action: &CsaAnonymizeAction,
+    ) -> Result<CsaAnonymizeResult, PrismError> {
+        let result = self
+            .anonymizer
+            .anonymize(
+                &action.data_collection_refs,
+                action.target_k_anonymity,
+                &action.aggregation_strategy,
+            )
+            .await?;
+
+        // Audit event
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: TenantId::from_uuid(uuid::Uuid::nil()),
+                event_type: "csa.anonymized".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: Some(action.assessment_id),
+                target_type: Some("CsaAssessment".into()),
+                severity: Severity::Medium,
+                source_layer: SourceLayer::Governance,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "k_anonymity": action.target_k_anonymity,
+                    "strategy": action.aggregation_strategy,
+                    "residual_risk": result.residual_risk,
+                    "parameters_applied": result.parameters,
+                }),
+            })
+            .await?;
+
+        info!(
+            assessment_id = %action.assessment_id,
+            k_anonymity = action.target_k_anonymity,
+            residual_risk = result.residual_risk,
+            "CSA ANONYMIZE action executed"
+        );
+
+        Ok(CsaAnonymizeResult {
+            anonymized_payload: result.payload,
+            parameters_applied: result.parameters,
+            residual_risk_score: result.residual_risk,
+        })
+    }
+}
+
+// ===========================================================================
+// SR_GOV_28 -- CSA ELEVATE Handler
+// ===========================================================================
+
+/// Handler for CSA ELEVATE actions.
+///
+/// Returns the required permission and the path to request elevation.
+///
+/// Implements: SR_GOV_28
+pub struct CsaElevateHandler {
+    audit: AuditLogger,
+}
+
+impl CsaElevateHandler {
+    /// Create a new CSA elevate handler.
+    pub fn new(audit: AuditLogger) -> Self {
+        Self { audit }
+    }
+
+    /// Handle a CSA elevate action.
+    ///
+    /// Returns the required permission and the request path. Does not
+    /// grant the permission -- the caller must follow the request_path.
+    ///
+    /// Implements: SR_GOV_28
+    pub async fn handle_elevate(
+        &self,
+        action: &CsaElevateAction,
+    ) -> Result<CsaElevateResult, PrismError> {
+        let request_path = if action.justification_required {
+            format!("/governance/elevate/{}/justify", action.required_permission)
+        } else {
+            format!("/governance/elevate/{}/request", action.required_permission)
+        };
+
+        // Audit event
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: TenantId::from_uuid(uuid::Uuid::nil()),
+                event_type: "csa.elevation_required".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: Some(action.assessment_id),
+                target_type: Some("CsaAssessment".into()),
+                severity: Severity::Medium,
+                source_layer: SourceLayer::Governance,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "required_permission": action.required_permission,
+                    "justification_required": action.justification_required,
+                    "request_path": request_path,
+                }),
+            })
+            .await?;
+
+        info!(
+            assessment_id = %action.assessment_id,
+            required_permission = %action.required_permission,
+            justification_required = action.justification_required,
+            "CSA ELEVATE action executed"
+        );
+
+        Ok(CsaElevateResult {
+            required_permission: action.required_permission.clone(),
+            request_path,
+        })
+    }
+}
+
+// ===========================================================================
+// SR_GOV_29 -- CSA Break-Glass
+// ===========================================================================
+
+/// Default break-glass duration in minutes per BP-133.
+const DEFAULT_BREAK_GLASS_DURATION_MINUTES: u64 = 240;
+
+/// Minimum justification length for break-glass activations.
+const BREAK_GLASS_MIN_JUSTIFICATION_LEN: usize = 20;
+
+/// Service for emergency break-glass activations and reviews.
+///
+/// Composes:
+/// - `BreakGlassRepository` -- persistence for activations
+/// - `AuditLogger` -- CRITICAL-severity audit trail
+///
+/// Implements: SR_GOV_29
+pub struct CsaBreakGlassService {
+    repo: Arc<dyn BreakGlassRepository>,
+    audit: AuditLogger,
+}
+
+impl CsaBreakGlassService {
+    /// Create a new break-glass service.
+    pub fn new(repo: Arc<dyn BreakGlassRepository>, audit: AuditLogger) -> Self {
+        Self { repo, audit }
+    }
+
+    /// Activate a break-glass override.
+    ///
+    /// Validates:
+    /// - Two-person rule (approver_1 != approver_2)
+    /// - Justification is non-empty and >= 20 characters
+    ///
+    /// Default duration is 240 minutes (4 hours) per BP-133.
+    ///
+    /// Implements: SR_GOV_29
+    pub async fn activate(
+        &self,
+        request: &CsaBreakGlassRequest,
+    ) -> Result<CsaBreakGlassResult, PrismError> {
+        // Validate two-person rule
+        if request.approver_1 == request.approver_2 {
+            return Err(PrismError::Validation {
+                reason: "break-glass requires two distinct approvers (two-person rule)".into(),
+            });
+        }
+
+        // Validate justification
+        let justification = request.justification.trim();
+        if justification.is_empty() {
+            return Err(PrismError::Validation {
+                reason: "break-glass justification must not be empty".into(),
+            });
+        }
+        if justification.len() < BREAK_GLASS_MIN_JUSTIFICATION_LEN {
+            return Err(PrismError::Validation {
+                reason: format!(
+                    "break-glass justification must be at least {} characters (got {})",
+                    BREAK_GLASS_MIN_JUSTIFICATION_LEN,
+                    justification.len()
+                ),
+            });
+        }
+
+        let duration_minutes = request
+            .duration_minutes
+            .unwrap_or(DEFAULT_BREAK_GLASS_DURATION_MINUTES);
+        let now = Utc::now();
+        let expires_at = now + Duration::minutes(duration_minutes as i64);
+        let review_id = uuid::Uuid::now_v7();
+
+        let activation = BreakGlassActivation {
+            id: uuid::Uuid::now_v7(),
+            assessment_id: request.assessment_id,
+            tenant_id: request.tenant_id,
+            justification: justification.to_string(),
+            approver_1: request.approver_1,
+            approver_2: request.approver_2,
+            duration_minutes,
+            activated_at: now,
+            expires_at,
+            review_id,
+            is_reviewed: false,
+        };
+
+        self.repo.record_activation(&activation).await?;
+
+        // Audit event at CRITICAL severity
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: request.tenant_id,
+                event_type: "csa.break_glass_activated".into(),
+                actor_id: *request.approver_1.as_uuid(),
+                actor_type: ActorType::Human,
+                target_id: Some(request.assessment_id),
+                target_type: Some("CsaAssessment".into()),
+                severity: Severity::Critical,
+                source_layer: SourceLayer::Governance,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "assessment_id": request.assessment_id.to_string(),
+                    "approver_1": request.approver_1.to_string(),
+                    "approver_2": request.approver_2.to_string(),
+                    "duration_minutes": duration_minutes,
+                    "review_id": review_id.to_string(),
+                }),
+            })
+            .await?;
+
+        warn!(
+            tenant_id = %request.tenant_id,
+            assessment_id = %request.assessment_id,
+            duration_minutes = duration_minutes,
+            "CSA BREAK-GLASS activated -- mandatory review required"
+        );
+
+        Ok(CsaBreakGlassResult {
+            authorized: true,
+            expires_at,
+            review_id,
+        })
+    }
+
+    /// Review a break-glass activation.
+    ///
+    /// Follow-ups are generated based on the review decision:
+    /// - Justified: no follow-ups
+    /// - Unjustified: security review with user
+    /// - NeedsRuleRefinement: CSA rule review
+    ///
+    /// Implements: SR_GOV_29
+    pub async fn review(
+        &self,
+        input: &BreakGlassReviewInput,
+    ) -> Result<BreakGlassReviewResult, PrismError> {
+        // Verify the activation exists
+        let activation = self.repo.get_by_review_id(input.review_id).await?;
+        let activation = activation.ok_or(PrismError::NotFound {
+            entity_type: "BreakGlassActivation",
+            id: input.review_id,
+        })?;
+
+        if activation.is_reviewed {
+            return Err(PrismError::Conflict {
+                reason: "break-glass activation has already been reviewed".into(),
+            });
+        }
+
+        // Mark as reviewed
+        self.repo.mark_reviewed(input.review_id).await?;
+
+        // Determine follow-ups
+        let follow_ups = match input.review_decision {
+            BreakGlassReviewDecision::Justified => Vec::new(),
+            BreakGlassReviewDecision::Unjustified => {
+                vec!["security_review_with_user".to_string()]
+            }
+            BreakGlassReviewDecision::NeedsRuleRefinement => {
+                vec!["csa_rule_review".to_string()]
+            }
+        };
+
+        // Audit event
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "csa.break_glass_reviewed".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::Human,
+                target_id: Some(input.review_id),
+                target_type: Some("BreakGlassActivation".into()),
+                severity: Severity::High,
+                source_layer: SourceLayer::Governance,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "review_decision": format!("{:?}", input.review_decision),
+                    "notes": input.notes,
+                    "follow_ups": follow_ups,
+                }),
+            })
+            .await?;
+
+        info!(
+            review_id = %input.review_id,
+            decision = ?input.review_decision,
+            follow_ups = ?follow_ups,
+            "Break-glass activation reviewed"
+        );
+
+        Ok(BreakGlassReviewResult {
+            review_decision: input.review_decision,
+            follow_ups,
+        })
+    }
+}
+
+// ===========================================================================
+// SR_GOV_30 -- CSA Assessment Persistence
+// ===========================================================================
+
+/// Service for persisting CSA assessment records to the governance graph.
+///
+/// Composes:
+/// - `CsaAssessmentRepository` -- persistence for assessment records
+/// - `AuditLogger` -- audit trail for persistence events
+///
+/// Implements: SR_GOV_30
+pub struct CsaAssessmentPersistService {
+    repo: Arc<dyn CsaAssessmentRepository>,
+    audit: AuditLogger,
+}
+
+impl CsaAssessmentPersistService {
+    /// Create a new assessment persistence service.
+    pub fn new(repo: Arc<dyn CsaAssessmentRepository>, audit: AuditLogger) -> Self {
+        Self { repo, audit }
+    }
+
+    /// Persist a CSA assessment record.
+    ///
+    /// Creates a record with all assessment details and emits an audit event.
+    ///
+    /// Implements: SR_GOV_30
+    pub async fn persist(
+        &self,
+        input: &CsaAssessmentPersistInput,
+    ) -> Result<CsaAssessmentPersistResult, PrismError> {
+        let record = CsaAssessmentRecord {
+            id: input.assessment_id,
+            tenant_id: input.tenant_id,
+            query_id: input.query_id,
+            data_collection_refs: input.data_collection_refs.clone(),
+            decision: input.decision,
+            applied_rules: input.applied_rules.clone(),
+            created_at: Utc::now(),
+        };
+
+        self.repo.persist(&record).await?;
+
+        // Audit event
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: input.tenant_id,
+                event_type: "csa.assessment_persisted".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: Some(input.assessment_id),
+                target_type: Some("CsaAssessmentRecord".into()),
+                severity: Severity::Low,
+                source_layer: SourceLayer::Governance,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "query_id": input.query_id.to_string(),
+                    "decision": format!("{:?}", input.decision),
+                    "applied_rules_count": input.applied_rules.len(),
+                    "data_collection_count": input.data_collection_refs.len(),
+                }),
+            })
+            .await?;
+
+        info!(
+            tenant_id = %input.tenant_id,
+            assessment_id = %input.assessment_id,
+            decision = ?input.decision,
+            "CSA assessment persisted"
+        );
+
+        Ok(CsaAssessmentPersistResult {
+            node_id: input.assessment_id,
         })
     }
 }
@@ -839,5 +1292,398 @@ mod tests {
         let result = handler.handle_block(&action).await.unwrap();
         assert!(result.rejected);
         assert!(result.alternatives.is_empty());
+    }
+
+    // -- Mock AnonymizationFunction -------------------------------------------
+
+    struct MockAnonymizer;
+
+    #[async_trait]
+    impl AnonymizationFunction for MockAnonymizer {
+        async fn anonymize(
+            &self,
+            data: &[String],
+            k_anonymity: u32,
+            strategy: &str,
+        ) -> Result<AnonymizedPayload, PrismError> {
+            Ok(AnonymizedPayload {
+                payload: serde_json::json!({
+                    "anonymized_refs": data,
+                    "k": k_anonymity,
+                }),
+                parameters: format!("k={},strategy={}", k_anonymity, strategy),
+                residual_risk: 0.15,
+            })
+        }
+    }
+
+    // -- Mock BreakGlassRepository --------------------------------------------
+
+    struct MockBreakGlassRepo {
+        activations: Mutex<Vec<BreakGlassActivation>>,
+    }
+
+    impl MockBreakGlassRepo {
+        fn new() -> Self {
+            Self {
+                activations: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl BreakGlassRepository for MockBreakGlassRepo {
+        async fn record_activation(
+            &self,
+            activation: &BreakGlassActivation,
+        ) -> Result<(), PrismError> {
+            self.activations.lock().unwrap().push(activation.clone());
+            Ok(())
+        }
+
+        async fn get_by_review_id(
+            &self,
+            review_id: uuid::Uuid,
+        ) -> Result<Option<BreakGlassActivation>, PrismError> {
+            let activations = self.activations.lock().unwrap();
+            Ok(activations
+                .iter()
+                .find(|a| a.review_id == review_id)
+                .cloned())
+        }
+
+        async fn mark_reviewed(&self, review_id: uuid::Uuid) -> Result<(), PrismError> {
+            let mut activations = self.activations.lock().unwrap();
+            if let Some(a) = activations.iter_mut().find(|a| a.review_id == review_id) {
+                a.is_reviewed = true;
+            }
+            Ok(())
+        }
+    }
+
+    // -- Mock CsaAssessmentRepository -----------------------------------------
+
+    struct MockCsaAssessmentRepo {
+        records: Mutex<Vec<CsaAssessmentRecord>>,
+    }
+
+    impl MockCsaAssessmentRepo {
+        fn new() -> Self {
+            Self {
+                records: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl CsaAssessmentRepository for MockCsaAssessmentRepo {
+        async fn persist(&self, record: &CsaAssessmentRecord) -> Result<(), PrismError> {
+            self.records.lock().unwrap().push(record.clone());
+            Ok(())
+        }
+    }
+
+    // -- SR_GOV_27 Tests: CSA ANONYMIZE Handler --------------------------------
+
+    #[tokio::test]
+    async fn anonymize_succeeds_with_parameters() {
+        let anonymizer = Arc::new(MockAnonymizer);
+        let audit = make_audit();
+        let handler = CsaAnonymizeHandler::new(anonymizer, audit);
+
+        let action = CsaAnonymizeAction {
+            assessment_id: uuid::Uuid::new_v4(),
+            data_collection_refs: vec!["coll_a".into(), "coll_b".into()],
+            target_k_anonymity: 5,
+            aggregation_strategy: "suppression".into(),
+        };
+
+        let result = handler.handle_anonymize(&action).await.unwrap();
+        assert!(result.parameters_applied.contains("k=5"));
+        assert!(result.parameters_applied.contains("suppression"));
+        assert!(!result.anonymized_payload.is_null());
+    }
+
+    #[tokio::test]
+    async fn anonymize_records_residual_risk() {
+        let anonymizer = Arc::new(MockAnonymizer);
+        let audit = make_audit();
+        let handler = CsaAnonymizeHandler::new(anonymizer, audit);
+
+        let action = CsaAnonymizeAction {
+            assessment_id: uuid::Uuid::new_v4(),
+            data_collection_refs: vec!["coll_a".into()],
+            target_k_anonymity: 3,
+            aggregation_strategy: "generalization".into(),
+        };
+
+        let result = handler.handle_anonymize(&action).await.unwrap();
+        assert!(result.residual_risk_score > 0.0);
+        assert!(result.residual_risk_score < 1.0);
+    }
+
+    // -- SR_GOV_28 Tests: CSA ELEVATE Handler ----------------------------------
+
+    #[tokio::test]
+    async fn elevate_returns_permission_info() {
+        let audit = make_audit();
+        let handler = CsaElevateHandler::new(audit);
+
+        let action = CsaElevateAction {
+            assessment_id: uuid::Uuid::new_v4(),
+            required_permission: "data.cross_system_read".into(),
+            justification_required: false,
+        };
+
+        let result = handler.handle_elevate(&action).await.unwrap();
+        assert_eq!(result.required_permission, "data.cross_system_read");
+        assert!(result.request_path.contains("data.cross_system_read"));
+        assert!(result.request_path.contains("/request"));
+    }
+
+    #[tokio::test]
+    async fn elevate_with_justification_required() {
+        let audit = make_audit();
+        let handler = CsaElevateHandler::new(audit);
+
+        let action = CsaElevateAction {
+            assessment_id: uuid::Uuid::new_v4(),
+            required_permission: "data.pii_access".into(),
+            justification_required: true,
+        };
+
+        let result = handler.handle_elevate(&action).await.unwrap();
+        assert_eq!(result.required_permission, "data.pii_access");
+        assert!(result.request_path.contains("/justify"));
+    }
+
+    // -- SR_GOV_29 Tests: CSA Break-Glass --------------------------------------
+
+    fn make_break_glass_service() -> (CsaBreakGlassService, Arc<MockBreakGlassRepo>) {
+        let repo = Arc::new(MockBreakGlassRepo::new());
+        let audit = make_audit();
+        let svc = CsaBreakGlassService::new(repo.clone(), audit);
+        (svc, repo)
+    }
+
+    #[tokio::test]
+    async fn break_glass_activation_succeeds_with_defaults() {
+        let (svc, repo) = make_break_glass_service();
+        let tenant_id = TenantId::new();
+
+        let request = CsaBreakGlassRequest {
+            tenant_id,
+            assessment_id: uuid::Uuid::new_v4(),
+            justification: "Emergency access needed for production incident remediation workflow"
+                .into(),
+            approver_1: UserId::new(),
+            approver_2: UserId::new(),
+            duration_minutes: None,
+        };
+
+        let result = svc.activate(&request).await.unwrap();
+        assert!(result.authorized);
+
+        // Verify default duration was applied (expires_at ~ now + 240min)
+        let activations = repo.activations.lock().unwrap();
+        assert_eq!(activations.len(), 1);
+        assert_eq!(activations[0].duration_minutes, 240);
+    }
+
+    #[tokio::test]
+    async fn break_glass_activation_custom_duration() {
+        let (svc, repo) = make_break_glass_service();
+        let tenant_id = TenantId::new();
+
+        let request = CsaBreakGlassRequest {
+            tenant_id,
+            assessment_id: uuid::Uuid::new_v4(),
+            justification: "Regulatory deadline requires extended access for data remediation"
+                .into(),
+            approver_1: UserId::new(),
+            approver_2: UserId::new(),
+            duration_minutes: Some(60),
+        };
+
+        let result = svc.activate(&request).await.unwrap();
+        assert!(result.authorized);
+
+        let activations = repo.activations.lock().unwrap();
+        assert_eq!(activations[0].duration_minutes, 60);
+    }
+
+    #[tokio::test]
+    async fn break_glass_rejects_same_approver() {
+        let (svc, _) = make_break_glass_service();
+        let tenant_id = TenantId::new();
+        let same_user = UserId::new();
+
+        let request = CsaBreakGlassRequest {
+            tenant_id,
+            assessment_id: uuid::Uuid::new_v4(),
+            justification: "Emergency access needed for production incident remediation workflow"
+                .into(),
+            approver_1: same_user,
+            approver_2: same_user,
+            duration_minutes: None,
+        };
+
+        let err = svc.activate(&request).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("two-person rule") || msg.contains("distinct approvers"));
+    }
+
+    #[tokio::test]
+    async fn break_glass_rejects_empty_justification() {
+        let (svc, _) = make_break_glass_service();
+        let tenant_id = TenantId::new();
+
+        let request = CsaBreakGlassRequest {
+            tenant_id,
+            assessment_id: uuid::Uuid::new_v4(),
+            justification: "".into(),
+            approver_1: UserId::new(),
+            approver_2: UserId::new(),
+            duration_minutes: None,
+        };
+
+        let err = svc.activate(&request).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("empty"));
+    }
+
+    // -- SR_GOV_29_REVIEW Tests: Break-Glass Review ----------------------------
+
+    async fn make_activation_for_review(svc: &CsaBreakGlassService) -> (TenantId, uuid::Uuid) {
+        let tenant_id = TenantId::new();
+        let request = CsaBreakGlassRequest {
+            tenant_id,
+            assessment_id: uuid::Uuid::new_v4(),
+            justification: "Emergency access needed for production incident remediation workflow"
+                .into(),
+            approver_1: UserId::new(),
+            approver_2: UserId::new(),
+            duration_minutes: None,
+        };
+        let result = svc.activate(&request).await.unwrap();
+        (tenant_id, result.review_id)
+    }
+
+    #[tokio::test]
+    async fn break_glass_review_justified() {
+        let (svc, _) = make_break_glass_service();
+        let (tenant_id, review_id) = make_activation_for_review(&svc).await;
+
+        let input = BreakGlassReviewInput {
+            review_id,
+            tenant_id,
+            review_decision: BreakGlassReviewDecision::Justified,
+            notes: "Verified incident required emergency access".into(),
+        };
+
+        let result = svc.review(&input).await.unwrap();
+        assert_eq!(result.review_decision, BreakGlassReviewDecision::Justified);
+        assert!(result.follow_ups.is_empty());
+    }
+
+    #[tokio::test]
+    async fn break_glass_review_unjustified_triggers_security_review() {
+        let (svc, _) = make_break_glass_service();
+        let (tenant_id, review_id) = make_activation_for_review(&svc).await;
+
+        let input = BreakGlassReviewInput {
+            review_id,
+            tenant_id,
+            review_decision: BreakGlassReviewDecision::Unjustified,
+            notes: "No evidence of actual incident found".into(),
+        };
+
+        let result = svc.review(&input).await.unwrap();
+        assert_eq!(
+            result.review_decision,
+            BreakGlassReviewDecision::Unjustified
+        );
+        assert!(result
+            .follow_ups
+            .contains(&"security_review_with_user".to_string()));
+    }
+
+    #[tokio::test]
+    async fn break_glass_review_needs_rule_refinement_triggers_rule_review() {
+        let (svc, _) = make_break_glass_service();
+        let (tenant_id, review_id) = make_activation_for_review(&svc).await;
+
+        let input = BreakGlassReviewInput {
+            review_id,
+            tenant_id,
+            review_decision: BreakGlassReviewDecision::NeedsRuleRefinement,
+            notes: "CSA rule is too broad for this use case".into(),
+        };
+
+        let result = svc.review(&input).await.unwrap();
+        assert_eq!(
+            result.review_decision,
+            BreakGlassReviewDecision::NeedsRuleRefinement
+        );
+        assert!(result.follow_ups.contains(&"csa_rule_review".to_string()));
+    }
+
+    // -- SR_GOV_30 Tests: CSA Assessment Persistence ---------------------------
+
+    fn make_persist_service() -> (CsaAssessmentPersistService, Arc<MockCsaAssessmentRepo>) {
+        let repo = Arc::new(MockCsaAssessmentRepo::new());
+        let audit = make_audit();
+        let svc = CsaAssessmentPersistService::new(repo.clone(), audit);
+        (svc, repo)
+    }
+
+    #[tokio::test]
+    async fn persist_assessment_succeeds() {
+        let (svc, repo) = make_persist_service();
+        let tenant_id = TenantId::new();
+        let assessment_id = uuid::Uuid::new_v4();
+
+        let input = CsaAssessmentPersistInput {
+            tenant_id,
+            assessment_id,
+            query_id: uuid::Uuid::new_v4(),
+            data_collection_refs: vec!["coll_a".into(), "coll_b".into()],
+            decision: CsaDecision::Block,
+            applied_rules: vec!["rule_1".into()],
+        };
+
+        let result = svc.persist(&input).await.unwrap();
+        assert_eq!(result.node_id, assessment_id);
+
+        let records = repo.records.lock().unwrap();
+        assert_eq!(records.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn persist_assessment_records_all_fields() {
+        let (svc, repo) = make_persist_service();
+        let tenant_id = TenantId::new();
+        let assessment_id = uuid::Uuid::new_v4();
+        let query_id = uuid::Uuid::new_v4();
+
+        let input = CsaAssessmentPersistInput {
+            tenant_id,
+            assessment_id,
+            query_id,
+            data_collection_refs: vec!["coll_a".into(), "coll_b".into(), "coll_c".into()],
+            decision: CsaDecision::Anonymize,
+            applied_rules: vec!["rule_1".into(), "rule_2".into()],
+        };
+
+        svc.persist(&input).await.unwrap();
+
+        let records = repo.records.lock().unwrap();
+        let record = &records[0];
+        assert_eq!(record.id, assessment_id);
+        assert_eq!(record.tenant_id, tenant_id);
+        assert_eq!(record.query_id, query_id);
+        assert_eq!(record.data_collection_refs.len(), 3);
+        assert_eq!(record.decision, CsaDecision::Anonymize);
+        assert_eq!(record.applied_rules.len(), 2);
     }
 }

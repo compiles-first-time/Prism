@@ -840,6 +840,168 @@ pub struct CsaBlockResult {
     pub alternatives: Vec<String>,
 }
 
+// -- CSA ANONYMIZE action requests (SR_GOV_27) --------------------------------
+
+/// Input for a CSA anonymize action.
+/// Implements: SR_GOV_27
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaAnonymizeAction {
+    pub assessment_id: uuid::Uuid,
+    pub data_collection_refs: Vec<String>,
+    pub target_k_anonymity: u32,
+    pub aggregation_strategy: String,
+}
+
+/// Result of a CSA anonymize action.
+/// Implements: SR_GOV_27
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaAnonymizeResult {
+    pub anonymized_payload: serde_json::Value,
+    pub parameters_applied: String,
+    pub residual_risk_score: f64,
+}
+
+// -- CSA ELEVATE action requests (SR_GOV_28) ----------------------------------
+
+/// Input for a CSA elevate action.
+/// Implements: SR_GOV_28
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaElevateAction {
+    pub assessment_id: uuid::Uuid,
+    pub required_permission: String,
+    pub justification_required: bool,
+}
+
+/// Result of a CSA elevate action.
+/// Implements: SR_GOV_28
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaElevateResult {
+    pub required_permission: String,
+    pub request_path: String,
+}
+
+// -- CSA break-glass requests (SR_GOV_29) -------------------------------------
+
+/// Request to activate a break-glass override.
+/// Implements: SR_GOV_29
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaBreakGlassRequest {
+    pub tenant_id: TenantId,
+    pub assessment_id: uuid::Uuid,
+    pub justification: String,
+    pub approver_1: UserId,
+    pub approver_2: UserId,
+    pub duration_minutes: Option<u64>,
+}
+
+/// Result of a break-glass activation.
+/// Implements: SR_GOV_29
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaBreakGlassResult {
+    pub authorized: bool,
+    pub expires_at: DateTime<Utc>,
+    pub review_id: uuid::Uuid,
+}
+
+/// Input for reviewing a break-glass activation.
+/// Implements: SR_GOV_29
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BreakGlassReviewInput {
+    pub review_id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    pub review_decision: super::enums::BreakGlassReviewDecision,
+    pub notes: String,
+}
+
+/// Result of a break-glass review.
+/// Implements: SR_GOV_29
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BreakGlassReviewResult {
+    pub review_decision: super::enums::BreakGlassReviewDecision,
+    pub follow_ups: Vec<String>,
+}
+
+// -- CSA assessment persistence requests (SR_GOV_30) --------------------------
+
+/// Input for persisting a CSA assessment record.
+/// Implements: SR_GOV_30
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaAssessmentPersistInput {
+    pub tenant_id: TenantId,
+    pub assessment_id: uuid::Uuid,
+    pub query_id: uuid::Uuid,
+    pub data_collection_refs: Vec<String>,
+    pub decision: super::enums::CsaDecision,
+    pub applied_rules: Vec<String>,
+}
+
+/// Result of persisting a CSA assessment.
+/// Implements: SR_GOV_30
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CsaAssessmentPersistResult {
+    pub node_id: uuid::Uuid,
+}
+
+// -- LLM Router Stage 1 requests (SR_GOV_73) ----------------------------------
+
+/// Input for the LLM Router Stage 1 governance check.
+/// Implements: SR_GOV_73
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouterStage1Input {
+    pub tenant_id: TenantId,
+    pub principal_id: uuid::Uuid,
+    pub data_attributes: serde_json::Value,
+    pub request_context: serde_json::Value,
+}
+
+/// Result of the LLM Router Stage 1 evaluation.
+/// Implements: SR_GOV_73
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RouterStage1Result {
+    pub allowed_models: Vec<String>,
+    pub reasoning: Vec<String>,
+}
+
+// -- Decision Support preflight requests (SR_GOV_74) --------------------------
+
+/// Input for a decision-support preflight check.
+/// Implements: SR_GOV_74
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionSupportPreflightInput {
+    pub tenant_id: TenantId,
+    pub query_id: uuid::Uuid,
+    pub data_collection_refs: Vec<String>,
+    pub parameter_overrides: Vec<String>,
+}
+
+/// Result of a decision-support preflight check.
+/// Implements: SR_GOV_74
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionSupportPreflightResult {
+    pub allowed: bool,
+    pub blocked_reasons: Vec<String>,
+}
+
+// -- UI visibility check requests (SR_GOV_75) ---------------------------------
+
+/// Input for checking UI element visibility.
+/// Implements: SR_GOV_75
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiVisibilityCheck {
+    pub tenant_id: TenantId,
+    pub principal_id: UserId,
+    pub principal_roles: Vec<String>,
+    pub ui_element_id: String,
+    pub context: serde_json::Value,
+}
+
+/// Result of a UI element visibility check.
+/// Implements: SR_GOV_75
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UiVisibilityResult {
+    pub decision: super::enums::UiVisibility,
+}
+
 // -- Lifecycle requests (FOUND S 1.5.1) -------------------------------------
 
 /// A validated state transition produced by the lifecycle state machine.

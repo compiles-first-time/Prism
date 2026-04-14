@@ -46,6 +46,14 @@
 | SR_GOV_24 | CSA assessment trigger | **Done** | prism-governance | csa_engine.rs | 4 unit | Week 3 Day 13 |
 | SR_GOV_25 | CSA evaluator | **Done** | prism-governance | csa_engine.rs | 4 unit | Week 3 Day 13 |
 | SR_GOV_26 | CSA BLOCK action | **Done** | prism-governance | csa_engine.rs | 2 unit | Week 3 Day 13 |
+| SR_GOV_27 | CSA ANONYMIZE action | **Done** | prism-governance | csa_engine.rs | 2 unit | Week 3 Day 14 |
+| SR_GOV_28 | CSA ELEVATE action | **Done** | prism-governance | csa_engine.rs | 2 unit | Week 3 Day 14 |
+| SR_GOV_29 | CSA break-glass | **Done** | prism-governance | csa_engine.rs | 4 unit | Week 3 Day 14 |
+| SR_GOV_29_REVIEW | Break-glass review | **Done** | prism-governance | csa_engine.rs | 3 unit | Week 3 Day 14 |
+| SR_GOV_30 | CSA assessment persistence | **Done** | prism-governance | csa_engine.rs | 2 unit | Week 3 Day 14 |
+| SR_GOV_73 | LLM Router Stage 1 | **Done** | prism-governance | governance_hooks.rs | 3 unit | Week 3 Day 14 |
+| SR_GOV_74 | DS preflight | **Done** | prism-governance | governance_hooks.rs | 3 unit | Week 3 Day 14 |
+| SR_GOV_75 | UI visibility check | **Done** | prism-governance | governance_hooks.rs | 3 unit | Week 3 Day 14 |
 | SR_GOV_52 | Crypto-shredding | Deferred | prism-compliance | crypto_shredding.rs | -- | Week 3+ (needs CaaS) |
 | SR_DM_01 | Tenant node creation | **Done** | prism-governance | pg_tenant_repo.rs | -- | Day 3 (PG only; Neo4j Week 2) |
 | SR_DM_02 | Person node creation | **Done** | prism-identity | pg_repository.rs | -- | Day 4 (PG only) |

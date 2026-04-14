@@ -254,6 +254,40 @@ pub trait CsaRuleRepository: Send + Sync {
     async fn get_by_id(&self, id: uuid::Uuid) -> Result<Option<CsaRule>, PrismError>;
 }
 
+// -- Break-Glass Repository (SR_GOV_29) ----------------------------------------
+
+/// Persistence operations for break-glass activations.
+/// Implements: SR_GOV_29
+#[async_trait]
+pub trait BreakGlassRepository: Send + Sync {
+    /// Record a break-glass activation.
+    /// Implements: SR_GOV_29
+    async fn record_activation(
+        &self,
+        activation: &crate::types::BreakGlassActivation,
+    ) -> Result<(), PrismError>;
+
+    /// Get a break-glass activation by its review ID.
+    async fn get_by_review_id(
+        &self,
+        review_id: uuid::Uuid,
+    ) -> Result<Option<crate::types::BreakGlassActivation>, PrismError>;
+
+    /// Mark a break-glass activation as reviewed.
+    async fn mark_reviewed(&self, review_id: uuid::Uuid) -> Result<(), PrismError>;
+}
+
+// -- CSA Assessment Repository (SR_GOV_30) ------------------------------------
+
+/// Persistence operations for CSA assessment records.
+/// Implements: SR_GOV_30
+#[async_trait]
+pub trait CsaAssessmentRepository: Send + Sync {
+    /// Persist a CSA assessment record.
+    /// Implements: SR_GOV_30
+    async fn persist(&self, record: &crate::types::CsaAssessmentRecord) -> Result<(), PrismError>;
+}
+
 // -- Audit Event Repository (SR_DM_05) --------------------------------------
 
 /// Persistence operations for the append-only audit event store.

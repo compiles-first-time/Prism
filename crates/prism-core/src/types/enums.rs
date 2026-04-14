@@ -338,6 +338,32 @@ pub enum CsaDecision {
     Elevate,
 }
 
+/// Decision from a break-glass activation review.
+/// Implements: SR_GOV_29
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BreakGlassReviewDecision {
+    /// The break-glass activation was justified.
+    Justified,
+    /// The break-glass activation was not justified.
+    Unjustified,
+    /// The CSA rule that triggered the break-glass needs refinement.
+    NeedsRuleRefinement,
+}
+
+/// UI element visibility decision.
+/// Implements: SR_GOV_75
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UiVisibility {
+    /// Element is fully visible and interactive.
+    Visible,
+    /// Element is hidden from the user.
+    Hidden,
+    /// Element is visible but not editable.
+    ReadOnly,
+}
+
 /// Source layer that produced a governance event (SR_GOV_47).
 /// Maps to the architectural layers in the PRISM spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
