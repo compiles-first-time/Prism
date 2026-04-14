@@ -613,6 +613,109 @@ pub struct AnalyticsExportResult {
     pub event_count: u64,
 }
 
+// -- Criminal-penalty visibility override requests (SR_GOV_35) ---------------
+
+/// Request to check criminal-penalty compartment visibility override.
+/// For criminal-penalty compartments, denies ANY principal not explicitly listed
+/// as a member, regardless of position in the org tree (including executives).
+/// Implements: SR_GOV_35
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CriminalPenaltyOverrideCheck {
+    pub tenant_id: TenantId,
+    pub compartment_id: CompartmentId,
+    pub principal_id: UserId,
+    pub principal_roles: Vec<RoleId>,
+    /// Org-tree ancestors of the principal (e.g., manager, director, VP, ...).
+    /// For criminal-penalty compartments, these are ignored -- only explicit membership counts.
+    pub principal_chain: Vec<UserId>,
+}
+
+/// Result of a criminal-penalty visibility override check.
+/// Implements: SR_GOV_35
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CriminalPenaltyOverrideResult {
+    pub decision: AccessDecision,
+    pub reason: Option<String>,
+}
+
+// -- Compartment audit report requests (SR_GOV_36) ---------------------------
+
+/// Request to generate a compartment audit report.
+/// Implements: SR_GOV_36
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompartmentAuditRequest {
+    pub tenant_id: TenantId,
+    pub compartment_id: CompartmentId,
+    pub period: String,
+}
+
+/// Result of a compartment audit report generation.
+/// Implements: SR_GOV_36
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompartmentAuditResult {
+    pub report_payload: Vec<u8>,
+    pub signature: String,
+    pub member_count: usize,
+}
+
+// -- Feature flag requests (SR_GOV_68) ---------------------------------------
+
+/// Request to toggle a feature flag.
+/// Implements: SR_GOV_68
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeatureFlagToggleRequest {
+    pub tenant_id: TenantId,
+    pub flag_id: String,
+    pub value: bool,
+    pub approved_by: UserId,
+}
+
+/// Result of a feature flag operation.
+/// Implements: SR_GOV_68
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeatureFlagResult {
+    pub active: bool,
+}
+
+// -- Admin undo requests (SR_GOV_69) -----------------------------------------
+
+/// Request to undo a previously recorded admin action.
+/// Implements: SR_GOV_69
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoRequest {
+    pub tenant_id: TenantId,
+    pub action_id: uuid::Uuid,
+    pub requesting_admin: UserId,
+}
+
+/// Result of an undo attempt.
+/// Implements: SR_GOV_69
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UndoResult {
+    pub undone: bool,
+    pub reason_if_not: Option<String>,
+}
+
+// -- Rejection justification validation requests (SR_GOV_72) -----------------
+
+/// Input for validating a recommendation rejection.
+/// Implements: SR_GOV_72
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RejectionInput {
+    pub tenant_id: TenantId,
+    pub recommendation_id: uuid::Uuid,
+    pub category: String,
+    pub justification_text: String,
+}
+
+/// Result of a rejection validation.
+/// Implements: SR_GOV_72
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RejectionResult {
+    pub stored: bool,
+    pub validation_findings: Option<String>,
+}
+
 // -- Lifecycle requests (FOUND S 1.5.1) -------------------------------------
 
 /// A validated state transition produced by the lifecycle state machine.

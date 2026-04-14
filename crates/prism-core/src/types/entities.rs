@@ -177,6 +177,44 @@ pub struct AlertHistoryEntry {
     pub created_at: DateTime<Utc>,
 }
 
+// -- Feature Flag (SR_GOV_68) -----------------------------------------------
+
+/// A tenant-scoped feature flag controlled by governance.
+/// Implements: SR_GOV_68
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FeatureFlag {
+    pub id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    /// Unique human-readable flag identifier (e.g., "enable_ai_suggestions").
+    pub flag_id: String,
+    pub value: bool,
+    pub approved_by: UserId,
+    /// Optional plan tier that must be active for this flag to be eligible.
+    pub plan_tier_required: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// -- Admin Action (SR_GOV_69) -----------------------------------------------
+
+/// A recorded admin action that may be undone within a time window.
+/// Implements: SR_GOV_69
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdminAction {
+    pub id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    pub action_type: String,
+    pub payload: serde_json::Value,
+    pub performed_by: UserId,
+    pub is_undoable: bool,
+    /// Security-critical actions cannot be undone.
+    pub is_security_critical: bool,
+    pub performed_at: DateTime<Utc>,
+    /// How many seconds after performed_at the action can be undone.
+    pub undo_window_seconds: u64,
+    pub is_undone: bool,
+}
+
 // -- Approval Chain ---------------------------------------------------------
 
 /// An approval chain instance computed by the LCA algorithm.

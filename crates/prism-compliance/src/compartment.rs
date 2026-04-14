@@ -20,6 +20,21 @@ use prism_core::repository::CompartmentRepository;
 use prism_core::types::*;
 
 // ---------------------------------------------------------------------------
+// Trait: CompartmentReportSigner
+// ---------------------------------------------------------------------------
+
+/// Signs compartment audit report payloads.
+///
+/// Similar to `ExportSigner` in prism-audit but scoped to compartment reports.
+///
+/// Implements: SR_GOV_36
+#[async_trait]
+pub trait CompartmentReportSigner: Send + Sync {
+    /// Sign the given payload bytes and return a hex-encoded signature.
+    async fn sign(&self, payload: &[u8]) -> Result<String, PrismError>;
+}
+
+// ---------------------------------------------------------------------------
 // Trait: SessionTerminator
 // ---------------------------------------------------------------------------
 
@@ -50,12 +65,14 @@ pub trait SessionTerminator: Send + Sync {
 /// - `CompartmentRepository` -- persistence for compartments and membership
 /// - `AuditLogger` -- audit trail for all compartment operations
 /// - `SessionTerminator` -- terminates sessions on revocation (SR_GOV_34)
+/// - `CompartmentReportSigner` -- signs compartment audit reports (SR_GOV_36)
 ///
-/// Implements: SR_GOV_31, SR_GOV_32, SR_GOV_33, SR_GOV_34
+/// Implements: SR_GOV_31, SR_GOV_32, SR_GOV_33, SR_GOV_34, SR_GOV_35, SR_GOV_36
 pub struct CompartmentService {
     repo: Arc<dyn CompartmentRepository>,
     audit: AuditLogger,
     session_terminator: Option<Arc<dyn SessionTerminator>>,
+    report_signer: Option<Arc<dyn CompartmentReportSigner>>,
 }
 
 impl CompartmentService {
@@ -65,6 +82,7 @@ impl CompartmentService {
             repo,
             audit,
             session_terminator: None,
+            report_signer: None,
         }
     }
 
@@ -78,6 +96,21 @@ impl CompartmentService {
             repo,
             audit,
             session_terminator: Some(session_terminator),
+            report_signer: None,
+        }
+    }
+
+    /// Create a new compartment service with report signing support.
+    pub fn with_report_signer(
+        repo: Arc<dyn CompartmentRepository>,
+        audit: AuditLogger,
+        report_signer: Arc<dyn CompartmentReportSigner>,
+    ) -> Self {
+        Self {
+            repo,
+            audit,
+            session_terminator: None,
+            report_signer: Some(report_signer),
         }
     }
 
@@ -465,6 +498,174 @@ impl CompartmentService {
             compartment_id: request.compartment_id,
             removed,
             sessions_terminated,
+        })
+    }
+
+    /// Check criminal-penalty visibility override.
+    ///
+    /// For criminal-penalty compartments: DENY any principal not explicitly
+    /// listed as a member, regardless of their position in the org tree.
+    /// Even if the principal_chain includes executives or org-tree ancestors,
+    /// they are ignored -- only direct membership counts.
+    ///
+    /// For non-criminal-penalty compartments: ALLOW (fallback to normal
+    /// access check via `check_access`).
+    ///
+    /// Implements: SR_GOV_35
+    pub async fn check_criminal_penalty_override(
+        &self,
+        request: &CriminalPenaltyOverrideCheck,
+    ) -> Result<CriminalPenaltyOverrideResult, PrismError> {
+        // Load the compartment
+        let compartment = self
+            .repo
+            .get_by_id(request.tenant_id, request.compartment_id)
+            .await?
+            .ok_or_else(|| PrismError::NotFound {
+                entity_type: "Compartment",
+                id: *request.compartment_id.as_uuid(),
+            })?;
+
+        // Non-criminal-penalty compartments: ALLOW (normal access rules apply)
+        if !compartment.criminal_penalty_isolation {
+            return Ok(CriminalPenaltyOverrideResult {
+                decision: AccessDecision::Allow,
+                reason: Some(
+                    "compartment does not have criminal-penalty isolation; \
+                     normal access rules apply"
+                        .into(),
+                ),
+            });
+        }
+
+        // Criminal-penalty compartment: check ONLY explicit membership
+        // principal_chain (org-tree ancestors) is intentionally ignored
+        let is_member = self
+            .repo
+            .is_member(
+                request.tenant_id,
+                request.compartment_id,
+                request.principal_id,
+                &request.principal_roles,
+            )
+            .await?;
+
+        if is_member {
+            Ok(CriminalPenaltyOverrideResult {
+                decision: AccessDecision::Allow,
+                reason: Some(
+                    "principal is an explicit member of the criminal-penalty compartment".into(),
+                ),
+            })
+        } else {
+            warn!(
+                tenant_id = %request.tenant_id,
+                compartment_id = %request.compartment_id,
+                principal_id = %request.principal_id,
+                ancestor_count = request.principal_chain.len(),
+                "SR_GOV_35: criminal-penalty override DENIED -- principal not explicit member \
+                 (org-tree ancestors ignored)"
+            );
+
+            Ok(CriminalPenaltyOverrideResult {
+                decision: AccessDecision::Deny,
+                reason: Some(
+                    "criminal-penalty compartment denies access to non-members; \
+                     org-tree position is not sufficient"
+                        .into(),
+                ),
+            })
+        }
+    }
+
+    /// Generate a compartment audit report.
+    ///
+    /// Queries the compartment membership list, serializes a report payload,
+    /// signs it via the `CompartmentReportSigner`, and emits an audit event.
+    ///
+    /// Implements: SR_GOV_36
+    pub async fn generate_audit_report(
+        &self,
+        request: &CompartmentAuditRequest,
+    ) -> Result<CompartmentAuditResult, PrismError> {
+        // Verify compartment exists
+        let compartment = self
+            .repo
+            .get_by_id(request.tenant_id, request.compartment_id)
+            .await?
+            .ok_or_else(|| PrismError::NotFound {
+                entity_type: "Compartment",
+                id: *request.compartment_id.as_uuid(),
+            })?;
+
+        // Get report signer (required for this operation)
+        let signer = self
+            .report_signer
+            .as_ref()
+            .ok_or_else(|| PrismError::Internal("CompartmentReportSigner not configured".into()))?;
+
+        // Query membership
+        let members = self
+            .repo
+            .list_members(request.tenant_id, request.compartment_id)
+            .await?;
+
+        let member_count = members.len();
+
+        // Build report payload
+        let report = serde_json::json!({
+            "compartment_id": request.compartment_id.to_string(),
+            "compartment_name": compartment.name,
+            "classification_level": compartment.classification_level,
+            "criminal_penalty_isolation": compartment.criminal_penalty_isolation,
+            "period": request.period,
+            "member_count": member_count,
+            "members": members.iter().map(|m| {
+                serde_json::json!({
+                    "person_id": m.person_id.map(|p| p.to_string()),
+                    "role_id": m.role_id.map(|r| r.to_string()),
+                    "added_at": m.added_at.to_rfc3339(),
+                })
+            }).collect::<Vec<_>>(),
+            "generated_at": Utc::now().to_rfc3339(),
+        });
+
+        let report_payload = serde_json::to_vec(&report)
+            .map_err(|e| PrismError::Serialization(format!("failed to serialize report: {e}")))?;
+
+        // Sign the report
+        let signature = signer.sign(&report_payload).await?;
+
+        // Audit event
+        self.audit
+            .log(AuditEventInput {
+                tenant_id: request.tenant_id,
+                event_type: "compartment.audit_report_generated".into(),
+                actor_id: uuid::Uuid::nil(),
+                actor_type: ActorType::System,
+                target_id: Some(*request.compartment_id.as_uuid()),
+                target_type: Some("Compartment".into()),
+                severity: Severity::Medium,
+                source_layer: SourceLayer::Compliance,
+                governance_authority: None,
+                payload: serde_json::json!({
+                    "period": request.period,
+                    "member_count": member_count,
+                }),
+            })
+            .await?;
+
+        info!(
+            compartment_id = %request.compartment_id,
+            tenant_id = %request.tenant_id,
+            member_count,
+            "compartment audit report generated"
+        );
+
+        Ok(CompartmentAuditResult {
+            report_payload,
+            signature,
+            member_count,
         })
     }
 }
@@ -1112,5 +1313,183 @@ mod tests {
         let result = svc.revoke_member(&revoke_req).await.unwrap();
         assert!(result.removed);
         assert_eq!(result.sessions_terminated, 0); // no terminator = 0 sessions
+    }
+
+    // -- SR_GOV_35 Criminal-Penalty Override Tests ----------------------------
+
+    #[tokio::test]
+    async fn criminal_penalty_denies_non_member_with_ancestors() {
+        let (svc, _) = make_service();
+        let tenant_id = TenantId::new();
+        let member = UserId::new();
+        let outsider = UserId::new();
+        let ancestor_vp = UserId::new();
+        let ancestor_ceo = UserId::new();
+
+        // Create criminal-penalty compartment with only `member`
+        let mut req = make_create_request(tenant_id);
+        req.member_persons = vec![member];
+        let created = svc.create(&req).await.unwrap();
+
+        // Outsider has ancestors (VP, CEO) but is NOT a member
+        let check = CriminalPenaltyOverrideCheck {
+            tenant_id,
+            compartment_id: created.compartment_id,
+            principal_id: outsider,
+            principal_roles: vec![],
+            principal_chain: vec![ancestor_vp, ancestor_ceo],
+        };
+
+        let result = svc.check_criminal_penalty_override(&check).await.unwrap();
+        assert_eq!(result.decision, AccessDecision::Deny);
+        assert!(result.reason.unwrap().contains("non-members"));
+    }
+
+    #[tokio::test]
+    async fn criminal_penalty_allows_explicit_member() {
+        let (svc, _) = make_service();
+        let tenant_id = TenantId::new();
+        let member = UserId::new();
+
+        let mut req = make_create_request(tenant_id);
+        req.member_persons = vec![member];
+        let created = svc.create(&req).await.unwrap();
+
+        let check = CriminalPenaltyOverrideCheck {
+            tenant_id,
+            compartment_id: created.compartment_id,
+            principal_id: member,
+            principal_roles: vec![],
+            principal_chain: vec![],
+        };
+
+        let result = svc.check_criminal_penalty_override(&check).await.unwrap();
+        assert_eq!(result.decision, AccessDecision::Allow);
+    }
+
+    #[tokio::test]
+    async fn non_criminal_penalty_allows_fallback() {
+        let (svc, _) = make_service();
+        let tenant_id = TenantId::new();
+        let outsider = UserId::new();
+
+        // Create non-criminal-penalty compartment
+        let mut req = make_create_request(tenant_id);
+        req.criminal_penalty_isolation = false;
+        req.classification_level = ClassificationLevel::Confidential;
+        let created = svc.create(&req).await.unwrap();
+
+        let check = CriminalPenaltyOverrideCheck {
+            tenant_id,
+            compartment_id: created.compartment_id,
+            principal_id: outsider,
+            principal_roles: vec![],
+            principal_chain: vec![],
+        };
+
+        let result = svc.check_criminal_penalty_override(&check).await.unwrap();
+        assert_eq!(result.decision, AccessDecision::Allow);
+    }
+
+    #[tokio::test]
+    async fn criminal_penalty_override_nonexistent_compartment_fails() {
+        let (svc, _) = make_service();
+
+        let check = CriminalPenaltyOverrideCheck {
+            tenant_id: TenantId::new(),
+            compartment_id: CompartmentId::new(),
+            principal_id: UserId::new(),
+            principal_roles: vec![],
+            principal_chain: vec![],
+        };
+
+        let err = svc
+            .check_criminal_penalty_override(&check)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, PrismError::NotFound { .. }));
+    }
+
+    // -- SR_GOV_36 Compartment Audit Report Tests ----------------------------
+
+    // Mock CompartmentReportSigner
+    struct MockReportSigner;
+
+    #[async_trait]
+    impl CompartmentReportSigner for MockReportSigner {
+        async fn sign(&self, payload: &[u8]) -> Result<String, PrismError> {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            payload.hash(&mut hasher);
+            Ok(format!("{:016x}", hasher.finish()))
+        }
+    }
+
+    fn make_service_with_signer() -> (CompartmentService, Arc<MockCompartmentRepo>) {
+        let repo = Arc::new(MockCompartmentRepo::new());
+        let audit_repo = Arc::new(MockAuditRepo::new());
+        let audit = AuditLogger::new(audit_repo);
+        let signer = Arc::new(MockReportSigner);
+        let svc = CompartmentService::with_report_signer(repo.clone(), audit, signer);
+        (svc, repo)
+    }
+
+    #[tokio::test]
+    async fn audit_report_generated_successfully() {
+        let (svc, _) = make_service_with_signer();
+        let tenant_id = TenantId::new();
+        let created = svc.create(&make_create_request(tenant_id)).await.unwrap();
+
+        let report_req = CompartmentAuditRequest {
+            tenant_id,
+            compartment_id: created.compartment_id,
+            period: "2026-Q1".into(),
+        };
+
+        let result = svc.generate_audit_report(&report_req).await.unwrap();
+        assert!(!result.report_payload.is_empty());
+        assert!(!result.signature.is_empty());
+        assert_eq!(result.member_count, 1);
+    }
+
+    #[tokio::test]
+    async fn audit_report_nonexistent_compartment_fails() {
+        let (svc, _) = make_service_with_signer();
+
+        let report_req = CompartmentAuditRequest {
+            tenant_id: TenantId::new(),
+            compartment_id: CompartmentId::new(),
+            period: "2026-Q1".into(),
+        };
+
+        let err = svc.generate_audit_report(&report_req).await.unwrap_err();
+        assert!(matches!(err, PrismError::NotFound { .. }));
+    }
+
+    #[tokio::test]
+    async fn audit_report_includes_membership_data() {
+        let (svc, _) = make_service_with_signer();
+        let tenant_id = TenantId::new();
+        let person1 = UserId::new();
+        let person2 = UserId::new();
+
+        let mut req = make_create_request(tenant_id);
+        req.member_persons = vec![person1, person2];
+        let created = svc.create(&req).await.unwrap();
+
+        let report_req = CompartmentAuditRequest {
+            tenant_id,
+            compartment_id: created.compartment_id,
+            period: "2026-Q1".into(),
+        };
+
+        let result = svc.generate_audit_report(&report_req).await.unwrap();
+        assert_eq!(result.member_count, 2);
+
+        // Verify report payload contains member data
+        let report: serde_json::Value = serde_json::from_slice(&result.report_payload).unwrap();
+        let members = report.get("members").unwrap().as_array().unwrap();
+        assert_eq!(members.len(), 2);
     }
 }

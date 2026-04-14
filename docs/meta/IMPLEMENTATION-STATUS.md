@@ -35,6 +35,11 @@
 | SR_GOV_38 | Query analytics aggregation | **Done** | prism-governance | query_analytics.rs | 1 unit | Week 2 Day 11 |
 | SR_GOV_39 | Analytics access control | **Done** | prism-governance | query_analytics.rs | 6 unit | Week 2 Day 11 |
 | SR_GOV_40 | Analytics export | **Done** | prism-governance | query_analytics.rs | 2 unit | Week 2 Day 11 |
+| SR_GOV_35 | Criminal-penalty override | **Done** | prism-compliance | compartment.rs | 4 unit | Week 2 Day 12 |
+| SR_GOV_36 | Compartment audit report | **Done** | prism-compliance | compartment.rs | 3 unit | Week 2 Day 12 |
+| SR_GOV_68 | Feature flag toggle | **Done** | prism-governance | feature_flags.rs | 5 unit | Week 2 Day 12 |
+| SR_GOV_69 | Admin undo | **Done** | prism-governance | admin_undo.rs | 5 unit | Week 2 Day 12 |
+| SR_GOV_72 | Rejection justification | **Done** | prism-governance | rejection_validation.rs | 5 unit | Week 2 Day 12 |
 | SR_GOV_52 | Crypto-shredding | Deferred | prism-compliance | crypto_shredding.rs | -- | Week 3+ (needs CaaS) |
 | SR_DM_01 | Tenant node creation | **Done** | prism-governance | pg_tenant_repo.rs | -- | Day 3 (PG only; Neo4j Week 2) |
 | SR_DM_02 | Person node creation | **Done** | prism-identity | pg_repository.rs | -- | Day 4 (PG only) |

@@ -4,6 +4,61 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-14 -- Day 12 (Week 2): Criminal-penalty override, compartment audit, feature flags, admin undo, rejection validation
+
+### Implemented
+- SR_GOV_35 check_criminal_penalty_override() on CompartmentService: overrides "visibility flows up" for criminal-penalty compartments
+  - For criminal-penalty compartments: DENY for any principal not explicitly listed as member, regardless of org-tree position
+  - For non-criminal-penalty compartments: falls back to normal access (ALLOW)
+  - CriminalPenaltyOverrideCheck includes principal_chain (org-tree ancestors) which is explicitly ignored for criminal-penalty data
+  - 4 new tests: denies non-member even with ancestors, allows explicit member, allows for non-criminal-penalty, nonexistent compartment fails
+- SR_GOV_36 generate_audit_report() on CompartmentService: signed compartment audit report
+  - CompartmentReportSigner trait for pluggable report signing
+  - Queries membership list, builds JSON payload with period and membership data
+  - Audit event: `compartment.audit_report_generated`
+  - 3 new tests: report generated with correct member count, nonexistent compartment, report includes membership data
+- SR_GOV_68 FeatureFlagService: per-tenant feature flag governance
+  - toggle(): validate flag_id non-empty, approved_by non-nil, audit event `feature_flag_toggled`
+  - is_enabled(): returns false if flag doesn't exist (safe default)
+  - list_for_tenant(): list all flags for a tenant
+  - FeatureFlagRepository trait, FeatureFlag entity
+  - 5 new tests: toggle on, toggle off, is_enabled false for unknown, toggle validates empty flag, list_for_tenant
+- SR_GOV_69 AdminUndoService: undo critical admin actions within time window (BP-77)
+  - record_action(): persist an admin action with undoable/security-critical flags
+  - undo(): validates action exists, is_undoable, NOT security-critical, within 600s window, not already undone
+  - Audit event: `admin.action_undone`
+  - AdminActionRepository trait, AdminAction entity
+  - 5 new tests: undo succeeds, rejects security-critical, rejects expired window, rejects nonexistent, rejects already-undone
+- SR_GOV_72 RejectionValidationService: recommendation rejection validation per D-19
+  - Reuses JustificationValidator from SR_GOV_18 for filler/length checks
+  - Category validation: must be one of inaccurate, irrelevant, incomplete, outdated, other
+  - Audit events: `recommendation.rejection_recorded` on success, `recommendation.rejection_invalid` on failure
+  - 5 new tests: valid accepted, empty text rejected, invalid category rejected, filler text rejected, short text rejected
+
+### Design Decisions
+- SR_GOV_35 explicitly ignores principal_chain for criminal-penalty compartments -- this is the core override behavior (even CEO cannot see BSA/AML data without explicit membership)
+- CompartmentReportSigner is separate from ExportSigner and RuleExportSigner -- each domain may use different signing keys
+- FeatureFlagService defaults to disabled (false) for unknown flags -- safe default prevents accidental feature exposure
+- AdminUndoService uses a 600-second (10-minute) default window per BP-77; security-critical flag is immutable after recording
+- RejectionValidationService reuses JustificationValidator rather than duplicating the filler/length logic (DRY per BP-134)
+
+### Files Changed
+- `crates/prism-core/src/types/requests.rs` -- added 10 request/result types for SR_GOV_35, 36, 68, 69, 72
+- `crates/prism-core/src/types/entities.rs` -- added FeatureFlag, AdminAction entities
+- `crates/prism-core/src/repository.rs` -- added FeatureFlagRepository, AdminActionRepository traits
+- `crates/prism-compliance/src/compartment.rs` -- added check_criminal_penalty_override(), generate_audit_report(), CompartmentReportSigner, 7 tests
+- `crates/prism-governance/src/feature_flags.rs` -- new file, FeatureFlagService + 5 tests
+- `crates/prism-governance/src/admin_undo.rs` -- new file, AdminUndoService + 5 tests
+- `crates/prism-governance/src/rejection_validation.rs` -- new file, RejectionValidationService + 5 tests
+- `crates/prism-governance/src/lib.rs` -- registered 3 new modules
+
+### Test Summary
+- 22 new tests (4 criminal-penalty + 3 compartment audit + 5 feature flags + 5 admin undo + 5 rejection)
+- 183 total workspace tests, all passing
+- All quality gates green: fmt, clippy, test, check
+
+---
+
 ## Session 2026-04-14 -- Day 11 (Week 2): Rule rollback, export, query analytics (SR_GOV_21-22, SR_GOV_37-40)
 
 ### Implemented

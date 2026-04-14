@@ -141,6 +141,50 @@ pub trait CompartmentRepository: Send + Sync {
     ) -> Result<bool, PrismError>;
 }
 
+// -- Feature Flag Repository (SR_GOV_68) ------------------------------------
+
+/// Persistence operations for feature flags.
+/// Implements: SR_GOV_68
+#[async_trait]
+pub trait FeatureFlagRepository: Send + Sync {
+    /// Get a feature flag by tenant and flag_id.
+    async fn get(
+        &self,
+        tenant_id: TenantId,
+        flag_id: &str,
+    ) -> Result<Option<FeatureFlag>, PrismError>;
+
+    /// Set (create or update) a feature flag.
+    async fn set(&self, flag: &FeatureFlag) -> Result<(), PrismError>;
+
+    /// List all feature flags for a tenant.
+    async fn list_for_tenant(&self, tenant_id: TenantId) -> Result<Vec<FeatureFlag>, PrismError>;
+}
+
+// -- Admin Action Repository (SR_GOV_69) ------------------------------------
+
+/// Persistence operations for admin actions (undo support).
+/// Implements: SR_GOV_69
+#[async_trait]
+pub trait AdminActionRepository: Send + Sync {
+    /// Record a new admin action.
+    async fn record(&self, action: &AdminAction) -> Result<(), PrismError>;
+
+    /// Get an admin action by ID.
+    async fn get_by_id(
+        &self,
+        tenant_id: TenantId,
+        action_id: uuid::Uuid,
+    ) -> Result<Option<AdminAction>, PrismError>;
+
+    /// Mark an action as undone.
+    async fn mark_undone(
+        &self,
+        tenant_id: TenantId,
+        action_id: uuid::Uuid,
+    ) -> Result<(), PrismError>;
+}
+
 // -- Ruleset Version Repository (SR_GOV_19) ---------------------------------
 
 /// Persistence operations for versioned governance rulesets.
