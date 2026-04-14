@@ -68,11 +68,7 @@ impl UserRepository for PgUserRepository {
         Ok(())
     }
 
-    async fn get_by_id(
-        &self,
-        tenant_id: TenantId,
-        id: UserId,
-    ) -> Result<Option<User>, PrismError> {
+    async fn get_by_id(&self, tenant_id: TenantId, id: UserId) -> Result<Option<User>, PrismError> {
         let row = sqlx::query_as::<_, UserRow>(
             r#"
             SELECT id, tenant_id, idp_id, email, display_name,
@@ -293,10 +289,8 @@ impl SpRow {
             tenant_id: TenantId::from_uuid(self.tenant_id),
             automation_id: self.automation_id.map(AutomationId::from_uuid),
             display_name: self.display_name,
-            identity_type: serde_json::from_value(serde_json::Value::String(
-                self.identity_type,
-            ))
-            .unwrap_or(IdentityType::Automation),
+            identity_type: serde_json::from_value(serde_json::Value::String(self.identity_type))
+                .unwrap_or(IdentityType::Automation),
             governance_profile: serde_json::from_value(serde_json::Value::String(
                 self.governance_profile,
             ))

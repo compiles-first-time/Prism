@@ -67,7 +67,10 @@ mod tests {
     fn enforce_different_tenant_fails() {
         let ctx = TenantContext::new(TenantId::new());
         let other = TenantId::new();
-        assert!(matches!(ctx.enforce(other), Err(PrismError::Forbidden { .. })));
+        assert!(matches!(
+            ctx.enforce(other),
+            Err(PrismError::Forbidden { .. })
+        ));
     }
 
     #[test]

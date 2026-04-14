@@ -122,13 +122,10 @@ impl TenantService {
 
     /// Retrieve a tenant by ID.
     pub async fn get(&self, id: TenantId) -> Result<Tenant, PrismError> {
-        self.repo
-            .get_by_id(id)
-            .await?
-            .ok_or(PrismError::NotFound {
-                entity_type: "Tenant",
-                id: id.into_uuid(),
-            })
+        self.repo.get_by_id(id).await?.ok_or(PrismError::NotFound {
+            entity_type: "Tenant",
+            id: id.into_uuid(),
+        })
     }
 
     /// List child tenants of a parent.
@@ -299,7 +296,9 @@ mod tests {
     #[tokio::test]
     async fn onboard_rejects_empty_name() {
         let (service, _, _) = make_service();
-        let result = service.onboard(onboard_request(""), uuid::Uuid::nil()).await;
+        let result = service
+            .onboard(onboard_request(""), uuid::Uuid::nil())
+            .await;
         assert!(matches!(result, Err(PrismError::Validation { .. })));
     }
 

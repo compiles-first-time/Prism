@@ -79,7 +79,11 @@ impl MerkleChainHasher {
         buf.extend_from_slice(source_layer.as_bytes());
         buf.push(sep);
         // serde_json::to_string is deterministic for the same Value.
-        buf.extend_from_slice(serde_json::to_string(payload).unwrap_or_default().as_bytes());
+        buf.extend_from_slice(
+            serde_json::to_string(payload)
+                .unwrap_or_default()
+                .as_bytes(),
+        );
         buf.push(sep);
         buf.extend_from_slice(created_at.to_rfc3339().as_bytes());
 
@@ -264,10 +268,28 @@ mod tests {
         let payload = serde_json::json!({"key": "value"});
 
         let b1 = MerkleChainHasher::canonical_bytes(
-            &tenant, "evt", &actor, "human", None, None, "low", "governance", &payload, &now,
+            &tenant,
+            "evt",
+            &actor,
+            "human",
+            None,
+            None,
+            "low",
+            "governance",
+            &payload,
+            &now,
         );
         let b2 = MerkleChainHasher::canonical_bytes(
-            &tenant, "evt", &actor, "human", None, None, "low", "governance", &payload, &now,
+            &tenant,
+            "evt",
+            &actor,
+            "human",
+            None,
+            None,
+            "low",
+            "governance",
+            &payload,
+            &now,
         );
         assert_eq!(b1, b2);
     }

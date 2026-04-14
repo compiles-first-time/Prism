@@ -141,10 +141,7 @@ impl AuditLogger {
     /// Query audit events with filters and pagination.
     ///
     /// Implements: SR_GOV_49
-    pub async fn query(
-        &self,
-        request: &AuditQueryRequest,
-    ) -> Result<AuditQueryResult, PrismError> {
+    pub async fn query(&self, request: &AuditQueryRequest) -> Result<AuditQueryResult, PrismError> {
         self.repo.query(request).await
     }
 }
@@ -187,10 +184,7 @@ mod tests {
                 .cloned())
         }
 
-        async fn query(
-            &self,
-            request: &AuditQueryRequest,
-        ) -> Result<AuditQueryResult, PrismError> {
+        async fn query(&self, request: &AuditQueryRequest) -> Result<AuditQueryResult, PrismError> {
             let events = self.events.lock().unwrap();
             let filtered: Vec<_> = events
                 .iter()

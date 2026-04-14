@@ -240,11 +240,7 @@ impl IdentityService {
     }
 
     /// Retrieve a user by ID within a tenant.
-    pub async fn get_user(
-        &self,
-        tenant_id: TenantId,
-        user_id: UserId,
-    ) -> Result<User, PrismError> {
+    pub async fn get_user(&self, tenant_id: TenantId, user_id: UserId) -> Result<User, PrismError> {
         self.user_repo
             .get_by_id(tenant_id, user_id)
             .await?
@@ -404,10 +400,7 @@ mod tests {
                 .cloned())
         }
 
-        async fn query(
-            &self,
-            _req: &AuditQueryRequest,
-        ) -> Result<AuditQueryResult, PrismError> {
+        async fn query(&self, _req: &AuditQueryRequest) -> Result<AuditQueryResult, PrismError> {
             Ok(AuditQueryResult {
                 events: vec![],
                 next_page_token: None,
@@ -426,7 +419,12 @@ mod tests {
 
     // -- Helpers --------------------------------------------------------------
 
-    fn make_service() -> (IdentityService, Arc<MockUserRepo>, Arc<MockSpRepo>, Arc<MockAuditRepo>) {
+    fn make_service() -> (
+        IdentityService,
+        Arc<MockUserRepo>,
+        Arc<MockSpRepo>,
+        Arc<MockAuditRepo>,
+    ) {
         let user_repo = Arc::new(MockUserRepo::new());
         let sp_repo = Arc::new(MockSpRepo::new());
         let audit_repo = Arc::new(MockAuditRepo::new());
@@ -444,21 +442,38 @@ mod tests {
         let actor = uuid::Uuid::nil();
 
         let user = svc
-            .provision_user(tid, "jane@meridian.com", "Jane Doe", Some("Engineering"), None, actor)
+            .provision_user(
+                tid,
+                "jane@meridian.com",
+                "Jane Doe",
+                Some("Engineering"),
+                None,
+                actor,
+            )
             .await
             .unwrap();
 
         assert_eq!(user.email, "jane@meridian.com");
         assert!(user.is_active);
         assert_eq!(user_repo.users.lock().unwrap().len(), 1);
-        assert_eq!(audit_repo.events.lock().unwrap()[0].event_type, "person.provisioned");
+        assert_eq!(
+            audit_repo.events.lock().unwrap()[0].event_type,
+            "person.provisioned"
+        );
     }
 
     #[tokio::test]
     async fn provision_user_rejects_invalid_email() {
         let (svc, _, _, _) = make_service();
         let result = svc
-            .provision_user(TenantId::new(), "not-an-email", "Test", None, None, uuid::Uuid::nil())
+            .provision_user(
+                TenantId::new(),
+                "not-an-email",
+                "Test",
+                None,
+                None,
+                uuid::Uuid::nil(),
+            )
             .await;
         assert!(matches!(result, Err(PrismError::Validation { .. })));
     }
@@ -467,7 +482,14 @@ mod tests {
     async fn provision_user_rejects_empty_name() {
         let (svc, _, _, _) = make_service();
         let result = svc
-            .provision_user(TenantId::new(), "x@y.com", "  ", None, None, uuid::Uuid::nil())
+            .provision_user(
+                TenantId::new(),
+                "x@y.com",
+                "  ",
+                None,
+                None,
+                uuid::Uuid::nil(),
+            )
             .await;
         assert!(matches!(result, Err(PrismError::Validation { .. })));
     }
@@ -492,7 +514,12 @@ mod tests {
     async fn provision_user_normalizes_email() {
         let (svc, user_repo, _, _) = make_service();
         svc.provision_user(
-            TenantId::new(), "  Jane@MERIDIAN.com  ", "Jane", None, None, uuid::Uuid::nil(),
+            TenantId::new(),
+            "  Jane@MERIDIAN.com  ",
+            "Jane",
+            None,
+            None,
+            uuid::Uuid::nil(),
         )
         .await
         .unwrap();
@@ -582,7 +609,10 @@ mod tests {
         assert!(!sps[0].is_active);
 
         let events = audit_repo.events.lock().unwrap();
-        assert_eq!(events.last().unwrap().event_type, "service_principal.deactivated");
+        assert_eq!(
+            events.last().unwrap().event_type,
+            "service_principal.deactivated"
+        );
     }
 
     #[tokio::test]
@@ -607,7 +637,9 @@ mod tests {
             .await
             .unwrap();
 
-        let result = svc.deactivate_service_principal(other_tid, sp.id, actor).await;
+        let result = svc
+            .deactivate_service_principal(other_tid, sp.id, actor)
+            .await;
         assert!(matches!(result, Err(PrismError::Forbidden { .. })));
     }
 
@@ -615,7 +647,11 @@ mod tests {
     async fn deactivate_nonexistent_sp_not_found() {
         let (svc, _, _, _) = make_service();
         let result = svc
-            .deactivate_service_principal(TenantId::new(), ServicePrincipalId::new(), uuid::Uuid::nil())
+            .deactivate_service_principal(
+                TenantId::new(),
+                ServicePrincipalId::new(),
+                uuid::Uuid::nil(),
+            )
             .await;
         assert!(matches!(result, Err(PrismError::NotFound { .. })));
     }

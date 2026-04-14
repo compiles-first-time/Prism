@@ -23,9 +23,7 @@ pub fn validate_transition(
         Err(PrismError::InvalidStateTransition {
             from,
             to,
-            reason: format!(
-                "allowed transitions from {from:?}: {allowed:?}"
-            ),
+            reason: format!("allowed transitions from {from:?}: {allowed:?}"),
         })
     }
 }
@@ -61,7 +59,10 @@ pub fn is_terminal(state: LifecycleState) -> bool {
 /// Credentials are revoked on Sunset and remain revoked through Archived/Deleted.
 pub fn has_active_credentials(state: LifecycleState) -> bool {
     use LifecycleState::*;
-    matches!(state, Draft | PendingApproval | ApprovedWithConditions | Active | UnderReview | Suspended)
+    matches!(
+        state,
+        Draft | PendingApproval | ApprovedWithConditions | Active | UnderReview | Suspended
+    )
 }
 
 #[cfg(test)]
@@ -71,7 +72,10 @@ mod tests {
 
     #[test]
     fn draft_can_only_move_to_pending() {
-        assert_eq!(validate_transition(Draft, PendingApproval).unwrap(), PendingApproval);
+        assert_eq!(
+            validate_transition(Draft, PendingApproval).unwrap(),
+            PendingApproval
+        );
         assert!(validate_transition(Draft, Active).is_err());
         assert!(validate_transition(Draft, Deleted).is_err());
     }
@@ -152,8 +156,16 @@ mod tests {
         // Every state reachable via allowed_transitions should itself
         // have a valid allowed_transitions entry (no panic).
         let all_states = [
-            Draft, PendingApproval, ApprovedWithConditions, Active,
-            UnderReview, Suspended, Sunset, Archived, Deleted, Rejected,
+            Draft,
+            PendingApproval,
+            ApprovedWithConditions,
+            Active,
+            UnderReview,
+            Suspended,
+            Sunset,
+            Archived,
+            Deleted,
+            Rejected,
         ];
         for state in all_states {
             let next = allowed_transitions(state);
