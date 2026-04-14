@@ -467,6 +467,24 @@ pub enum ConnectionState {
     Decommissioned,
 }
 
+/// Ingestion mode for log stream sources.
+/// Determines how frequently and in what manner events are pulled.
+/// Implements: SR_CONN_23
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IngestionMode {
+    /// Events are ingested continuously with sub-second latency.
+    RealTime,
+    /// Events are ingested on a short polling interval (seconds to low minutes).
+    NearRealTime,
+    /// Events are ingested on a cron-based schedule (e.g., hourly, daily).
+    Scheduled,
+    /// Events are ingested in large batches (e.g., nightly bulk loads).
+    Batch,
+    /// Events are ingested only when explicitly triggered by an operator.
+    OnDemand,
+}
+
 /// Source layer that produced a governance event (SR_GOV_47).
 /// Maps to the architectural layers in the PRISM spec.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -361,6 +361,28 @@ pub struct ConnectionRecord {
     pub updated_at: DateTime<Utc>,
 }
 
+// -- Execution Record (SR_CONN_11 .. SR_CONN_17) ----------------------------
+
+/// A record of a single connection pull execution.
+/// Produced by connection type adapters (Types 1-7) and captures
+/// credential type, data origin, record counts, and latency.
+/// Implements: SR_CONN_11 through SR_CONN_17
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionRecord {
+    pub id: uuid::Uuid,
+    pub tenant_id: TenantId,
+    pub connection_id: uuid::Uuid,
+    pub credential_type: String,
+    pub source_system: String,
+    pub records_pulled: u64,
+    pub fields: Vec<String>,
+    pub data_origin: DataOrigin,
+    pub status: String,
+    pub error: Option<String>,
+    pub latency_ms: u64,
+    pub created_at: DateTime<Utc>,
+}
+
 // -- Component Info (SR_GOV_78) ---------------------------------------------
 
 /// Metadata about a registered component for preflight checks.

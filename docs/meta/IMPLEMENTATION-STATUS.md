@@ -99,6 +99,20 @@
 | SR_CONN_08 | Suspend connection | **Done** | prism-adapters | connection_lifecycle.rs | 2 unit | Week 3 Day 20 |
 | SR_CONN_09 | Decommission | **Done** | prism-adapters | connection_lifecycle.rs | 2 unit | Week 3 Day 20 |
 | SR_CONN_10 | Recovery | **Done** | prism-adapters | connection_lifecycle.rs | 3 unit | Week 3 Day 20 |
+| SR_CONN_11 | Delegated user adapter | **Done** | prism-adapters | connection_adapters.rs | 1 unit | Day 21 |
+| SR_CONN_12 | Scoped SA adapter | **Done** | prism-adapters | connection_adapters.rs | 1 unit | Day 21 |
+| SR_CONN_13 | Privileged SA adapter | **Done** | prism-adapters | connection_adapters.rs | 1 unit | Day 21 |
+| SR_CONN_14 | OAuth adapter | **Done** | prism-adapters | connection_adapters.rs | 1 unit | Day 21 |
+| SR_CONN_15 | RPA adapter | **Done** | prism-adapters | connection_adapters.rs | 1 unit | Day 21 |
+| SR_CONN_16 | AI navigation adapter | **Done** | prism-adapters | connection_adapters.rs | 1 unit | Day 21 |
+| SR_CONN_17 | Bulk import adapter | **Done** | prism-adapters | connection_adapters.rs | 1 unit | Day 21 |
+| SR_CONN_18 | User upload adapter | **Done** | prism-adapters | connection_adapters.rs | 2 unit | Day 21 |
+| SR_CONN_19 | Log stream adapter | **Done** | prism-adapters | log_ingestion.rs | 2 unit | Day 21 |
+| SR_CONN_20 | Parser selection | **Done** | prism-adapters | log_ingestion.rs | 2 unit | Day 21 |
+| SR_CONN_21 | PII redaction | **Done** | prism-adapters | log_ingestion.rs | 2 unit | Day 21 |
+| SR_CONN_22 | Multi-system correlation | **Done** | prism-adapters | log_ingestion.rs | 2 unit | Day 21 |
+| SR_CONN_23 | Ingestion modes | **Done** | prism-adapters | log_ingestion.rs | 2 unit | Day 21 |
+| SR_CONN_24 | Log ingestion metrics | **Done** | prism-adapters | log_ingestion.rs | 1 unit | Day 21 |
 | **REUSABLE** | MerkleChainHasher | **Done** | prism-audit | merkle_chain.rs | 7 unit | Day 2 |
 | **REUSABLE** | AuditLogger | **Done** | prism-audit | event_store.rs | 7 unit | Day 2 |
 | **REUSABLE** | TenantFilter | **Done** | prism-core | tenant_filter.rs | 3 unit | Day 4 |

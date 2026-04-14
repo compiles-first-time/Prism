@@ -1750,3 +1750,94 @@ pub struct FeatureFlagCacheResult {
     pub active: bool,
     pub cache_invalidated: bool,
 }
+
+// -- Log stream ingestion requests (SR_CONN_19 .. SR_CONN_24) ----------------
+
+/// A raw log event read from a log source before parsing or redaction.
+/// Implements: SR_CONN_19
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RawLogEvent {
+    pub content: String,
+    pub timestamp: Option<DateTime<Utc>>,
+    pub source_id: String,
+}
+
+/// Input for a log ingestion run.
+/// Implements: SR_CONN_19
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogIngestInput {
+    pub tenant_id: TenantId,
+    pub source_id: String,
+    pub mode: String,
+    pub since_offset: u64,
+}
+
+/// Result of a log ingestion run.
+/// Implements: SR_CONN_19
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogIngestResult {
+    pub events_ingested: u64,
+    pub last_offset: u64,
+}
+
+/// Input for parser selection over sample lines.
+/// Implements: SR_CONN_20
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParserSelectionInput {
+    pub sample_lines: Vec<String>,
+}
+
+/// Result of parser selection.
+/// Implements: SR_CONN_20
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParserSelectionResult {
+    pub parser_id: Option<String>,
+    pub candidate: Option<String>,
+}
+
+/// A PII match found in log text.
+/// Implements: SR_CONN_21
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PiiMatch {
+    pub field: String,
+    pub pii_type: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// A correlation trace linking events across log sources.
+/// Implements: SR_CONN_22
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorrelationTrace {
+    pub trace_id: String,
+    pub source_events: Vec<uuid::Uuid>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Request to configure the ingestion mode for a log source.
+/// Implements: SR_CONN_23
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogIngestionModeRequest {
+    pub source_id: String,
+    pub mode: IngestionMode,
+}
+
+/// Result of configuring the ingestion mode.
+/// Implements: SR_CONN_23
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogIngestionModeResult {
+    pub mode: IngestionMode,
+    pub next_run_at: Option<DateTime<Utc>>,
+}
+
+/// A log metric row for ingestion monitoring.
+/// Implements: SR_CONN_24
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogMetricRow {
+    pub tenant_id: TenantId,
+    pub source_id: String,
+    pub events_per_second: f64,
+    pub parse_failure_rate: f64,
+    pub lag_seconds: u64,
+    pub redaction_count: u64,
+}

@@ -4,6 +4,19 @@ Reverse-chronological record of implementation sessions.
 
 ---
 
+## Session 2026-04-14 -- Day 21: Spec 03 — connection adapters + log stream ingestion
+
+### Implemented
+- SR_CONN_11-17: 7 connection type adapters (delegated user, scoped SA, privileged SA, OAuth, RPA, AI navigation, bulk import) implementing ConnectionAdapter trait
+- SR_CONN_18: User upload adapter with MLAID injection scanning (MlaidScanner trait)
+- AdapterRegistry (REUSABLE): routes connection type to appropriate adapter
+- SR_CONN_19-24: Complete log stream ingestion pipeline (LogStreamAdapter, LogParserRegistry with 4 built-in parsers, PII redaction, multi-system correlation, 5 ingestion modes, metrics)
+
+### Test Summary
+- 21 new tests, 353 total, all passing. All quality gates green.
+
+---
+
 ## Session 2026-04-14 -- Day 20 (Week 3): Spec 03 Connection Layer — lifecycle state machine
 
 ### Implemented
